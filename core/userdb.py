@@ -3,7 +3,9 @@
 表：
 - users         用户状态（好感度、称呼偏好、恋人确认、首次对话、日期标记）
 - messages      会话历史（短期上下文的来源）
-- long_memory   长期记忆片段（v1 用关键词检索，可换向量库）
+- long_memory   长期记忆原文片段（关键词检索）
+- facts         LLM 提炼的长期事实（喜好/约定等，带去重）
+- user_meta     事实提炼游标等元数据
 - affection_log 好感度变动流水
 """
 import sqlite3
@@ -42,8 +44,19 @@ CREATE TABLE IF NOT EXISTS affection_log (
     reason  TEXT NOT NULL,
     ts      TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS facts (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    ts      TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_meta (
+    user_id          TEXT PRIMARY KEY,
+    last_fact_msg_id INTEGER NOT NULL DEFAULT 0
+);
 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_long_memory_user ON long_memory(user_id, id);
+CREATE INDEX IF NOT EXISTS idx_facts_user ON facts(user_id, id);
 """
 
 
@@ -178,6 +191,76 @@ class UserDB:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [{"content": c} for _, c in scored[:top_k]]
 
+    # ---- facts（LLM 提炼的长期事实）----
+    def add_fact(self, user_id: str, content: str) -> bool:
+        """存一条事实；与已有事实二元组重叠≥50% 视为重复则跳过。"""
+        content = content.strip()
+        if not content:
+            return False
+        q = _bigrams(content)
+        rows = self.conn.execute(
+            "SELECT content FROM facts WHERE user_id = ? ORDER BY id DESC LIMIT 200",
+            (user_id,),
+        ).fetchall()
+        for r in rows:
+            existing = _bigrams(r["content"])
+            if q and existing:
+                overlap = len(q & existing) / min(len(q), len(existing))
+                if overlap >= 0.5:
+                    return False
+        self.conn.execute(
+            "INSERT INTO facts (user_id, content, ts) VALUES (?, ?, ?)",
+            (user_id, content, datetime.now().isoformat(timespec="seconds")),
+        )
+        self.conn.commit()
+        return True
+
+    def search_facts(self, user_id: str, query: str, top_k: int):
+        """按关键词（二元组）检索事实，取 top_k。"""
+        q_bigrams = _bigrams(query)
+        if not q_bigrams:
+            return []
+        rows = self.conn.execute(
+            "SELECT content FROM facts WHERE user_id = ? ORDER BY id DESC LIMIT 500",
+            (user_id,),
+        ).fetchall()
+        min_overlap = min(2, len(q_bigrams))
+        scored = []
+        for r in rows:
+            content_bigrams = _bigrams(r["content"])
+            overlap = len(q_bigrams & content_bigrams)
+            if overlap >= min_overlap:
+                scored.append((overlap, r["content"]))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [{"content": c} for _, c in scored[:top_k]]
+
+    # ---- 事实提炼游标 ----
+    def get_last_fact_msg_id(self, user_id: str) -> int:
+        row = self.conn.execute(
+            "SELECT last_fact_msg_id FROM user_meta WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return row["last_fact_msg_id"] if row else 0
+
+    def set_last_fact_msg_id(self, user_id: str, msg_id: int) -> None:
+        self.conn.execute(
+            "INSERT INTO user_meta (user_id, last_fact_msg_id) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET last_fact_msg_id = excluded.last_fact_msg_id",
+            (user_id, msg_id),
+        )
+        self.conn.commit()
+
+    def messages_after(self, user_id: str, after_id: int, limit: int):
+        return self.conn.execute(
+            "SELECT id, role, content FROM messages WHERE user_id = ? AND id > ? ORDER BY id LIMIT ?",
+            (user_id, after_id, limit),
+        ).fetchall()
+
+    def max_message_id(self, user_id: str) -> int:
+        row = self.conn.execute(
+            "SELECT MAX(id) AS m FROM messages WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return row["m"] or 0
+
     def reset(self) -> None:
         """清空所有数据（用于重复测试）。
 
@@ -204,7 +287,7 @@ class UserDB:
             self.conn.executescript(_SCHEMA)
         else:
             self.conn.execute("PRAGMA busy_timeout = 5000")
-            for table in ("affection_log", "long_memory", "messages", "users"):
+            for table in ("affection_log", "long_memory", "facts", "user_meta", "messages", "users"):
                 self.conn.execute(f"DELETE FROM {table}")
         self.conn.commit()
 

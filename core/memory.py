@@ -12,9 +12,14 @@ def short_term_messages(user_id: str) -> list[dict]:
 
 
 def recall(user_id: str, query: str) -> list[str]:
-    """长期记忆检索。
+    """长期记忆检索（对话原文片段）。
 
     v1 用关键词命中（见 userdb.search_long_memory），
     后续可无缝替换为向量检索（chromadb / sqlite-vec），接口不变。
     """
     return [h["content"] for h in db.search_long_memory(user_id, query, LONG_TERM_TOP_K)]
+
+
+def recall_facts(user_id: str, query: str) -> list[str]:
+    """检索 LLM 提炼的长期事实（用户喜好/约定等）。"""
+    return [h["content"] for h in db.search_facts(user_id, query, LONG_TERM_TOP_K)]

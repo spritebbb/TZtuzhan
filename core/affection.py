@@ -89,7 +89,7 @@ def _spam_hit(user_id: str) -> bool:
     return len(q) >= _SPAM_MAX_COUNT
 
 
-def on_message(user_id: str, text: str) -> None:
+async def on_message(user_id: str, text: str) -> None:
     """每次收到用户消息时调用：处理好感度即时规则与日期回滚。"""
     user = db.ensure_user(user_id)
     today = date.today()
@@ -100,11 +100,11 @@ def on_message(user_id: str, text: str) -> None:
         if last_day:
             yesterday = today - timedelta(days=1)
             if user["last_batch_date"] != yesterday.isoformat():
-                # 惰性执行昨日 LLM 每日总结（聊爱好/尊重/轻视判定）
+                # 惰性执行昨日 LLM 每日总结（聊爱好/尊重/轻视 + 事实提炼）
                 from .daily import run_daily_batch  # 延迟导入避免循环
 
                 try:
-                    run_daily_batch(user_id, yesterday)
+                    await run_daily_batch(user_id, yesterday)
                 except Exception:
                     pass  # 总结失败不阻塞对话
                 db.set_chat_date(user_id, today.isoformat(), yesterday.isoformat())

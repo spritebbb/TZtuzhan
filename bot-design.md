@@ -21,7 +21,7 @@ QQ 小号 ⇄ NapCat（OneBot 11）⇄ NoneBot2 ⇄ 对话核心
 |---|---|---|
 | 称呼偏好 | SQLite | 两次确认：首次对话询问一次；达成「恋人」阶段再确认一次；两次之间沿用首次称呼；称呼自动净化（去尾部语气词/引号），已确认不重复询问 |
 | 短期会话历史 | SQLite/内存 | 最近 N 轮（建议 30 轮），超出裁剪 |
-| 长期记忆 | 向量库（chromadb/sqlite-vec） | 历史重要内容切块 embedding，按当前话题检索 |
+| 长期记忆 | SQLite（long_memory 原文片段 + facts 事实表） | 原文关键词检索 + LLM 每日/定期事实提炼（喜好/约定等），注入上下文 |
 | 好感度 | SQLite | 0~100，含当日互动标记（用于每日首次/陪伴判定） |
 
 ## 3. 好感度加减分规则（用户确认版）
@@ -74,5 +74,5 @@ QQ 小号 ⇄ NapCat（OneBot 11）⇄ NoneBot2 ⇄ 对话核心
 - 框架：NoneBot2（Python 3.10+）+ nonebot-adapter-onebot（OneBot 11）
 - 协议端：NapCat（Windows，QQ 小号登录）
 - LLM：OpenAI 兼容 API（DeepSeek 等），`chat.completions` 非流式整条回复
-- 存储：SQLite（用户数据、好感度、会话索引）+ chromadb（长期记忆向量）
+- 存储：SQLite（Python 内置 sqlite3，零外部依赖）——用户数据、好感度、会话、长期记忆原文、facts 事实表
 - 部署：Windows NSSM 服务或任务计划程序，loguru 日志

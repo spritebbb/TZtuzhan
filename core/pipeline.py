@@ -7,7 +7,7 @@ import re
 
 from . import affection
 from .llm import chat, extract_address
-from .memory import recall, short_term_messages
+from .memory import recall, recall_facts, short_term_messages
 from .persona import build_system_prompt
 from .userdb import db
 
@@ -39,7 +39,16 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     first_chat = not user["first_chat_done"]
 
     # 1) 好感度即时规则（含跨天回滚）
-    affection.on_message(user_id, text)
+    await affection.on_message(user_id, text)
+
+    # 1.5) 惰性事实提炼（每约 12 条消息一次，让记忆当天就能用）
+    try:
+        if db.max_message_id(user_id) - db.get_last_fact_msg_id(user_id) >= 12:
+            from .daily import extract_facts  # 延迟导入避免循环
+
+            await extract_facts(user_id)
+    except Exception:
+        pass
 
     # 2) 称呼与过分称呼处理（无论是否已设称呼，过分称呼都要检测并扣分）
     pref = user["nickname_pref"]
@@ -69,6 +78,7 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
 
     # 3) 记忆与上下文
     remembered = recall(user_id, text)
+    facts = recall_facts(user_id, text)
     ctx = short_term_messages(user_id)
 
     # 4) 组装 prompt
@@ -85,6 +95,14 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
                 "role": "system",
                 "content": "你记得这些过去的事（作为参考，自然融入）：\n"
                 + "\n".join(f"- {t}" for t in remembered),
+            }
+        )
+    if facts:
+        messages.append(
+            {
+                "role": "system",
+                "content": "你记住的关于对方的事（自然融入，不要复述）：\n"
+                + "\n".join(f"- {f}" for f in facts),
             }
         )
     messages.extend(ctx)

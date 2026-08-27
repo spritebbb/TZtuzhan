@@ -128,7 +128,18 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     except Exception:
         logger.exception("[pipeline] 记忆检索失败，按无记忆继续")
         remembered, facts = [], []
+
+    # 3.1) 长会话压缩：总消息超阈值时，把旧消息摘要成一段记忆，只保留最近的完整消息
     ctx = short_term_messages(user_id)
+    compact_summary = None
+    try:
+        from .memory import compact_context
+
+        compacted = await compact_context(user_id, mock=mock)
+        if compacted is not None:
+            compact_summary, ctx = compacted
+    except Exception:
+        logger.exception("[pipeline] 长会话压缩失败，保持原上下文")
 
     # 3.5) 联网搜索（命中需要搜索的关键词时）
     search_hits = []
@@ -143,6 +154,38 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
         first_chat=first_chat,
     )
     messages = [{"role": "system", "content": system}]
+
+    # 4.1) 情感记忆：今天有没有特殊日子（生日/纪念日等）
+    try:
+        from .userdb import get_today_important_dates
+
+        today_dates = get_today_important_dates(user_id)
+    except Exception:
+        logger.exception("[pipeline] 特殊日子查询失败")
+        today_dates = []
+    if today_dates:
+        labels = "、".join(d["label"] for d in today_dates)
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    f"今天是特殊的日子：{labels}。你心里记着，如果话题合适就自然带一句祝福/提起，"
+                    "别刻意、别突然转移话题；如果对方在聊别的，就顺着聊，不用硬提。"
+                ),
+            }
+        )
+
+    if compact_summary:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "以下是你们之前聊过的一段更早的对话的摘要（作为长期背景，自然融入，不用复述）：\n"
+                    + compact_summary
+                ),
+            }
+        )
+
     if remembered:
         messages.append(
             {
@@ -248,7 +291,8 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
                 "回复前先在心里想一想，感受对方这句话背后的情绪和意图，掂量怎么接最自然、分寸怎么拿捏。"
                 "然后输出两段：\n"
                 "【思考】你内心真实的想法（用你自己的语气，不发给对方，不用客套）\n"
-                "【回复】你实际发给对方的话（保持你的风格：短句、慵懒温柔、像发消息一截一截，但一次回复最多两三截）\n"
+                "【回复】你实际发给对方的话（保持你的风格：短句、慵懒温柔、像发消息一截一截）。"
+                "条数完全看内容：接得住就一句，需要铺开就两句三句，别为了凑数或开头就固定成几段。\n"
                 "两段都要写，【回复】才是对方会看到的。"
             ),
         }

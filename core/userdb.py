@@ -56,9 +56,19 @@ CREATE TABLE IF NOT EXISTS user_meta (
     user_id          TEXT PRIMARY KEY,
     last_fact_msg_id INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS important_dates (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    date    TEXT NOT NULL,     -- 'MM-DD'（如 '12-25'；无年份的每年一次）
+    label   TEXT NOT NULL,     -- 事件名，如 '你的生日' / '我们认识的日子'
+    kind    TEXT NOT NULL DEFAULT 'other',  -- birthday / anniversary / other
+    year    INTEGER,           -- 有年份则存具体年份；无年份 NULL = 每年
+    ts      TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_long_memory_user ON long_memory(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_facts_user ON facts(user_id, id);
+CREATE INDEX IF NOT EXISTS idx_dates_user ON important_dates(user_id);
 """
 
 
@@ -373,6 +383,42 @@ def _bigrams(text: str) -> set[str]:
     if len(text) < 2:
         return set()
     return {text[i : i + 2] for i in range(len(text) - 1)}
+
+
+# ---- important_dates（情感记忆：生日/纪念日/特殊日子）----
+
+
+def save_important_date(user_id: str, date_str: str, label: str, kind: str = "other", year: int | None = None) -> None:
+    """保存一个特殊日子。date_str 格式为 'MM-DD'（如 '12-25'）。"""
+    db.conn.execute(
+        "INSERT INTO important_dates (user_id, date, label, kind, year, ts) VALUES (?, ?, ?, ?, ?, ?)",
+        (user_id, date_str, label, kind, year, datetime.now().isoformat(timespec="seconds")),
+    )
+    db.conn.commit()
+
+
+def get_today_important_dates(user_id: str) -> list[dict]:
+    """查询今天有哪些特殊日子（MM-DD 匹配）。"""
+    today = date.today().strftime("%m-%d")
+    rows = db.conn.execute(
+        "SELECT * FROM important_dates WHERE user_id = ? AND date = ? ORDER BY kind",
+        (user_id, today),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_all_important_dates(user_id: str) -> list[dict]:
+    """查询该用户所有特殊日子。"""
+    rows = db.conn.execute(
+        "SELECT * FROM important_dates WHERE user_id = ? ORDER BY date", (user_id,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_important_date(date_id: int) -> None:
+    """删除一条特殊日子记录。"""
+    db.conn.execute("DELETE FROM important_dates WHERE id = ?", (date_id,))
+    db.conn.commit()
 
 
 db = UserDB()

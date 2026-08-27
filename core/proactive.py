@@ -103,6 +103,26 @@ async def proactive_message(user_id: str) -> str:
                 ),
             }
         )
+    # 情感记忆：今天有特殊日子（生日/纪念日）时，优先用这个由头
+    try:
+        from .userdb import get_today_important_dates
+
+        today_dates = get_today_important_dates(user_id)
+    except Exception:
+        logger.exception("[主动] 特殊日子查询失败")
+        today_dates = []
+    if today_dates:
+        labels = "、".join(d["label"] for d in today_dates)
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    f"今天是特殊的日子：{labels}。"
+                    "如果合适，主动消息就从这个由头开始（比如轻轻说一句今天是你的生日/纪念日），"
+                    "自然一点，别太隆重，保持你的慵懒温柔。"
+                ),
+            }
+        )
     raw = await chat(messages)
     return strip_actions(_extract_reply(raw))
 

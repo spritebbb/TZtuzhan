@@ -32,6 +32,9 @@ class Config:
 
         # 网友式多条消息之间的发送间隔（秒）
         self.send_interval: float = float(os.getenv("SEND_INTERVAL", "3.0"))
+        # 收到消息后到发第一条回复的"酝酿"延迟（秒）：
+        # 模拟真人看到消息、想一下、开始打字的节奏，避免秒回显得像机器人
+        self.think_delay: float = float(os.getenv("THINK_DELAY", "2.0"))
 
         # 主动发消息（久别后菟菚主动找你）
         self.proactive_check_minutes: float = float(os.getenv("PROACTIVE_CHECK_MINUTES", "15"))

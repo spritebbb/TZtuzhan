@@ -3,6 +3,7 @@
 对话逻辑在 core/pipeline.process，本插件只负责 QQ 事件绑定。
 """
 import asyncio
+import random
 import re
 
 from nonebot import on_command, on_message
@@ -13,7 +14,13 @@ from core.config import config
 from core.pipeline import clean_address, process
 from core.proactive import send_proactive_now, set_active_user
 from core.search import last_error as search_last_error, web_search
-from core.userdb import db
+from core.userdb import (
+    db,
+    delete_important_date,
+    get_all_important_dates,
+    get_today_important_dates,
+    save_important_date,
+)
 from core.vision import describe_image
 
 private_msg = on_message(priority=5, block=True)
@@ -21,6 +28,23 @@ set_address_cmd = on_command("称呼", priority=4, block=True)
 aff_cmd = on_command("好感度", aliases={"好感", "aff"}, priority=4, block=True)
 search_cmd = on_command("搜索", aliases={"搜"}, priority=4, block=True)
 proactive_cmd = on_command("主动", priority=4, block=True)
+dates_cmd = on_command("日子", aliases={"特殊日子", "纪念日"}, priority=4, block=True)
+
+
+def _cmd_arg(plain: str, *names: str) -> str:
+    """从 on_command 事件纯文本里剥离命令词（含别名），只返回后面的参数。
+
+    NoneBot 的 event.get_plaintext() 对命令事件返回「命令词+参数」整句
+    （如「好感 80」「好感度」「aff」），直接当参数用会失配。
+    这里把 / 前缀 + 任一命令名/别名 剥掉，只留参数部分。
+    """
+    text = plain.strip()
+    for name in names:
+        # 命令名可能带 / 前缀（NoneBot 默认命令前缀），也可能不带
+        for prefix in (f"/{name}", name):
+            if text.startswith(prefix):
+                return text[len(prefix):].strip()
+    return text
 
 
 @proactive_cmd.handle()
@@ -69,19 +93,14 @@ async def handle_private(event: PrivateMessageEvent):
 
 
 def _split_reply(reply: str, max_len: int = 26) -> list[str]:
-    """把回复拆成适合逐条发送的短消息：按换行拆，超长句子再按标点拆；最多 3 条。"""
+    """把回复拆成适合逐条发送的短消息：按换行拆，一行就是一条（允许单长句）；
+    最多 3 条；超出的并进最后一条。"""
     chunks: list[str] = []
     for part in re.split(r"\n+", reply):
         part = part.strip()
         if not part:
             continue
-        if len(part) <= max_len:
-            chunks.append(part)
-        else:
-            for sub in re.split(r"(?<=[。！？，、；：])\s*", part):
-                sub = sub.strip()
-                if sub:
-                    chunks.append(sub)
+        chunks.append(part)
     if not chunks:
         chunks = [reply]
     if len(chunks) > 3:
@@ -105,9 +124,32 @@ def _build_message(text: str) -> Message:
     return msg
 
 
+# 菟菚偶尔附带的表情（QQ face id；慵懒温柔/轻微病娇/黏人的调调）
+_EMOJI_POOL = [109, 111, 122, 176, 178, 179, 186, 214, 277, 311, 319, 324, 326]
+# 触发概率：每条回复里加表情的概率（调高更爱用表情）
+_EMOJI_PROB = 0.4
+
+
+def _maybe_append_emoji(chunks: list[str]) -> list[str]:
+    """给回复的某一条末尾随机加一个 QQ 表情；偶尔加（概率 _EMOJI_PROB）。"""
+    if not chunks or random.random() >= _EMOJI_PROB:
+        return chunks
+    idx = random.randrange(len(chunks))
+    fid = random.choice(_EMOJI_POOL)
+    chunks[idx] = f"{chunks[idx]}[face:{fid}]"
+    return chunks
+
+
 async def _send_reply(reply: str) -> None:
-    """像网友发消息一样，把回复拆成多条短消息，带间隔依次发送。"""
+    """像网友发消息一样，把回复拆成多条短消息，带间隔依次发送。
+
+    先"酝酿"一会（模拟真人看到消息、想一下、开始打字），
+    再按条带间隔发出；回复越长酝酿越久一点。
+    """
     chunks = _split_reply(reply)
+    chunks = _maybe_append_emoji(chunks)
+    # 酝酿：基础延迟 + 每多一条多酝酿一会（但别太久）
+    await asyncio.sleep(config.think_delay + 0.5 * max(0, len(chunks) - 1))
     for i, c in enumerate(chunks):
         if i > 0:
             # 间隔随消息稍长一点 + 基础间隔，更像真人一条条打
@@ -120,7 +162,7 @@ async def _send_reply(reply: str) -> None:
 async def handle_set_address(event: PrivateMessageEvent):
     if not isinstance(event, PrivateMessageEvent):
         return
-    text = event.get_plaintext().strip()
+    text = _cmd_arg(event.get_plaintext(), "称呼")
     if not text:
         await set_address_cmd.finish(Message("用法：/称呼 哥哥"))
     name = clean_address(text) or text
@@ -135,9 +177,11 @@ async def handle_set_address(event: PrivateMessageEvent):
 async def handle_aff(event: PrivateMessageEvent):
     if not isinstance(event, PrivateMessageEvent):
         return
-    text = event.get_plaintext().strip()
+    text = _cmd_arg(event.get_plaintext(), "好感度", "好感", "aff")
     uid = str(event.user_id)
-    if not text or text in ("查看", "看", "查询", "当前"):
+    # 无参数，或含"查看/查询/当前"等词（含括号写法如（查看当前））→ 显示当前
+    clean = text.strip("（）()[]【】。")
+    if not clean or any(k in clean for k in ("查看", "看", "查询", "当前", "是多少", "多少")):
         await aff_cmd.finish(Message("当前 " + affection.describe(uid)))
     try:
         affection.set_affection(uid, int(text))
@@ -150,7 +194,7 @@ async def handle_aff(event: PrivateMessageEvent):
 async def handle_search(event: PrivateMessageEvent):
     if not isinstance(event, PrivateMessageEvent):
         return
-    text = event.get_plaintext().strip()
+    text = _cmd_arg(event.get_plaintext(), "搜索", "搜")
     if not text:
         await search_cmd.finish(Message("用法：/搜索 <关键词>"))
     results = web_search(text)
@@ -158,3 +202,46 @@ async def handle_search(event: PrivateMessageEvent):
         await search_cmd.finish(Message(f"没查到什么……（{search_last_error() or '未知原因'}）"))
     lines = [f"{r['title']}：{r['snippet'][:80]}" for r in results[:5]]
     await search_cmd.finish(Message("\n".join(lines)))
+
+
+_DATES_RE = re.compile(
+    r"^\s*(?:删除|删)\s*(\d+)|^\s*(\d{1,2})[-/\.](\d{1,2})\s+(.+)$|^\s*(查看|看看|列表|都有什么)$"
+)
+
+
+@dates_cmd.handle()
+async def handle_dates(event: PrivateMessageEvent):
+    """特殊日子管理：/日子 查看；/日子 12-25 你的生日；/日子 删除 1"""
+    if not isinstance(event, PrivateMessageEvent):
+        return
+    text = _cmd_arg(event.get_plaintext(), "日子", "特殊日子", "纪念日")
+    uid = str(event.user_id)
+
+    # 查看
+    if not text or text in ("查看", "看看", "列表", "都有什么"):
+        all_dates = get_all_important_dates(uid)
+        if not all_dates:
+            await dates_cmd.finish(Message("还没有记下什么特别的日子……你可以说：/日子 08-28 我的生日"))
+        lines = [f"{d['id']}. {d['date']} {d['label']}" for d in all_dates]
+        today = get_today_important_dates(uid)
+        extra = f"\n（今天就是：{'、'.join(d['label'] for d in today)}）" if today else ""
+        await dates_cmd.finish(Message("记着的日子：\n" + "\n".join(lines) + extra))
+
+    # 删除
+    m_del = re.match(r"^删除\s*(\d+)$", text)
+    if m_del:
+        delete_important_date(int(m_del.group(1)))
+        await dates_cmd.finish(Message("嗯，这个日子我忘掉了。"))
+
+    # 设置：日期 + 名称
+    m_set = re.match(r"^(\d{1,2})[-/\.](\d{1,2})\s+(.+)$", text)
+    if m_set:
+        month, day, label = int(m_set.group(1)), int(m_set.group(2)), m_set.group(3).strip()
+        if not (1 <= month <= 12 and 1 <= day <= 31):
+            await dates_cmd.finish(Message("日期不对哦，格式要像：/日子 12-25 你的生日"))
+        date_str = f"{month:02d}-{day:02d}"
+        save_important_date(uid, date_str, label)
+        await dates_cmd.finish(Message(f"记住了：{date_str} {label}。到那天我会记得的。"))
+        return
+
+    await dates_cmd.finish(Message("用法：/日子（查看）｜/日子 12-25 你的生日｜/日子 删除 1"))

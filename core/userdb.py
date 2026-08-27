@@ -57,6 +57,12 @@ CREATE TABLE IF NOT EXISTS user_meta (
     user_id          TEXT PRIMARY KEY,
     last_fact_msg_id INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS kv_store (
+    user_id TEXT NOT NULL,
+    key     TEXT NOT NULL,
+    value   TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (user_id, key)
+);
 CREATE TABLE IF NOT EXISTS important_dates (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
@@ -497,3 +503,23 @@ def get_sticker_by_desc(user_id: str, keyword: str, limit: int = 30) -> list[dic
 
 
 db = UserDB()
+
+
+# ---- kv_store（通用键值存储，用于每日奖励去重等）----
+
+
+def kv_get(user_id: str, key: str) -> str | None:
+    """读取 kv 值；不存在返回 None。"""
+    row = db.conn.execute(
+        "SELECT value FROM kv_store WHERE user_id=? AND key=?", (user_id, key)
+    ).fetchone()
+    return row["value"] if row else None
+
+
+def kv_set(user_id: str, key: str, value: str) -> None:
+    """写入 kv 值（UPSERT）。"""
+    db.conn.execute(
+        "INSERT OR REPLACE INTO kv_store (user_id, key, value) VALUES (?, ?, ?)",
+        (user_id, key, value),
+    )
+    db.conn.commit()

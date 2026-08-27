@@ -5,6 +5,7 @@
 """
 from datetime import datetime
 
+from . import affection as _affection
 from .config import config
 
 _persona_cache: str | None = None
@@ -45,6 +46,13 @@ _STAGE_FRAMING = {
     "恋人": "你们已经是恋人关系，感情很深，彼此信任、依恋、黏在一起。不要因为这次对话刚开头就退回到「刚认识」——你们早已认定彼此了，亲密的话放心说，不用别扭。",
 }
 
+# 恋人羁绊等级 → 更深一层的相处描述（由 affection.bond_level 注入）
+_BOND_FRAMING = {
+    "眷恋": "你们是恋人，但还带着一点新鲜感，彼此珍惜、温柔以待。",
+    "热恋": "你们正处于热恋期，亲密无间、一日不见如隔三秋，会忍不住黏着对方撒娇。",
+    "白头": "你们已经认定彼此，感情像老酒一样沉稳醇厚，默契到不用说出口就懂。",
+}
+
 
 def build_system_prompt(
     *,
@@ -52,6 +60,7 @@ def build_system_prompt(
     address: str | None,
     lover_confirm: bool,
     first_chat: bool,
+    affection: int = 0,
 ) -> str:
     """组装最终 system prompt = 人格 + 风格参考 + 当前用户状态注入。"""
     persona = load_persona()
@@ -73,11 +82,19 @@ def build_system_prompt(
         notes.append("称呼已经确认，不要重复询问称呼；除非用户主动要求更改，或达成恋人阶段需要第二次确认。")
     note_text = "\n".join(f"- {n}" for n in notes) if notes else "无。"
 
+    # 恋人阶段注入羁绊等级（眷恋/热恋/白头），让关系描述更细腻
+    bond_extra = ""
+    if stage == "恋人":
+        bl = _affection.bond_level(affection)
+        if bl:
+            bond_extra = f"- 羁绊等级：{bl[0]}（{_BOND_FRAMING.get(bl[0], '')}）\n"
+
     dynamic = (
         "\n\n## 当前状态（系统注入，不要复述本段）\n"
         f"- {_now_line()}\n"
         f"- 当前好感度阶段：{stage}\n"
         f"- 你们的关系：{framing}\n"
+        f"{bond_extra}"
         f"- 你对用户的称呼：{addr}\n"
         f"- 本轮注意：{note_text}\n"
         "特别提醒：**对方不提时间，你就绝口不提。** 不要主动说「这么晚/还不睡/该睡了/夜猫子/熬夜/注意时间」这类话，"

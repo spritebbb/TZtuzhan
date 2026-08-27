@@ -146,6 +146,14 @@ async def send_proactive_now(bot, user_id: str) -> bool:
         # 主动消息也存档：用户回复时上下文能接上（修复此前不写 messages 的断档）
         db.add_message(user_id, "assistant", msg_text)
         db.set_last_proactive(user_id)
+        # 记录本次主动消息时间戳（供「回应主动消息」好感度奖励检测）
+        try:
+            from .userdb import kv_set
+            import datetime
+
+            kv_set(user_id, "last_proactive_ts", datetime.datetime.now().isoformat(timespec="seconds"))
+        except Exception:
+            pass
         return True
     except Exception:
         logger.exception("[主动] 给 {} 发主动消息失败", user_id)

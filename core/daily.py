@@ -18,9 +18,11 @@ JUDGE_PROMPT = """你是「菟菚」的好感度管理员。根据以下某用�
 2) respect：用户是否尊重菟菚的喜好（如避开火、回应植物意象、不强迫）？（是→1，否→0）
 3) dismiss：用户是否有轻视、不重视菟菚的态度？（是→1，否→0）
 4) address：如果用户明确表达了想被怎么称呼，给出该称呼；否则留空字符串。
+5) care：用户是否有关心菟菚的言行（如问她累不累、注意休息、担心她等）？（是→1，否→0）
+6) deep_chat：昨天是否有深度/走心的对话（如倾诉心事、分享感受、坦诚交流）？（是→1，否→0）
 
 输出格式（不要任何其他内容）：
-{"hobby": 0, "respect": 0, "dismiss": 0, "address": ""}
+{"hobby": 0, "respect": 0, "dismiss": 0, "address": "", "care": 0, "deep_chat": 0}
 """
 
 FACT_PROMPT = """你是记忆提取员。根据下面的对话，提取两样东西，只输出一个 JSON：
@@ -64,6 +66,10 @@ async def run_daily_batch(user_id: str, day: date) -> None:
         db.update_affection(user_id, affection.RESPECT_BONUS, "尊重菟菚的喜好")
     if data.get("dismiss"):
         db.update_affection(user_id, affection.DISMISS_PENALTY, "轻视/不重视")
+    if data.get("care"):
+        db.update_affection(user_id, affection.CARE_BONUS, "关心菟菚")
+    if data.get("deep_chat"):
+        db.update_affection(user_id, affection.DEEP_CHAT_BONUS, "深度/走心对话")
 
     addr = (data.get("address") or "").strip()
     if addr and not db.get_user(user_id)["nickname_pref"] and not affection.check_bad_address(addr):

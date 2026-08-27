@@ -110,6 +110,34 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     # 1) 好感度即时规则（含跨天回滚）
     await affection.on_message(user_id, text)
 
+    # 1.1) v2 正向互动即时奖励（每日各上限 1 次；不阻塞、失败静默）
+    try:
+        # 用称呼交流
+        if affection.check_nickname_used(text, user["nickname_pref"]):
+            affection.try_daily_bonus(user_id, "nickname", affection.NICKNAME_BONUS, "用菟菚的称呼交流")
+        # 关心菟菚
+        if affection.check_care(text):
+            affection.try_daily_bonus(user_id, "care", affection.CARE_BONUS, "关心菟菚")
+        # 引用过去记忆（用户提到上次/之前/记得…，说明在引用共同经历）
+        from .memory import looks_like_recall
+
+        if looks_like_recall(text):
+            affection.try_daily_bonus(user_id, "memory", affection.MEMORY_REFERENCE_BONUS, "提到共同经历/回忆")
+        # 回应菟菚的主动消息（主动发过且 3 小时内回复）
+        try:
+            import datetime
+            from .userdb import kv_get
+
+            last_ts_str = kv_get(user_id, "last_proactive_ts")
+            if last_ts_str:
+                last_ts = datetime.datetime.fromisoformat(last_ts_str)
+                if datetime.datetime.now() - last_ts < datetime.timedelta(hours=3):
+                    affection.try_daily_bonus(user_id, "proactive_resp", affection.PROACTIVE_RESPONSE_BONUS, "回应菟菚的主动消息")
+        except Exception:
+            pass
+    except Exception:
+        logger.exception("[pipeline] 好感度即时奖励失败")
+
     # 1.5) 惰性事实提炼（按消息批量 + 会话长时间没说话后补提尾部）→ 后台执行，
     # 不阻塞本轮回复；失败只记日志（见 tasks.schedule 的 _runner）
     try:
@@ -181,6 +209,7 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
         address=pref,
         lover_confirm=bool(user["lover_confirm"]),
         first_chat=first_chat,
+        affection=user["affection"],
     )
     messages = [{"role": "system", "content": system}]
 

@@ -10,9 +10,7 @@ import argparse
 import asyncio
 
 from core import affection
-from core.llm import chat
-from core.memory import recall, short_term_messages
-from core.persona import build_system_prompt
+from core.pipeline import process
 from core.userdb import db
 
 USER_ID = "local-user"
@@ -32,40 +30,7 @@ async def main(mock: bool) -> None:
         if text in ("exit", "quit"):
             break
 
-        user = db.ensure_user(USER_ID)
-        first_chat = not user["first_chat_done"]
-
-        affection.on_message(USER_ID, text)
-
-        pref = user["nickname_pref"]
-        remembered = recall(USER_ID, text)
-        ctx = short_term_messages(USER_ID)
-
-        system = build_system_prompt(
-            stage=affection.stage_of(user["affection"]),
-            address=pref,
-            lover_confirm=bool(user["lover_confirm"]),
-            first_chat=first_chat,
-        )
-        messages = [{"role": "system", "content": system}]
-        if remembered:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": "你记得这些过去的事（作为参考，自然融入）：\n"
-                    + "\n".join(f"- {t}" for t in remembered),
-                }
-            )
-        messages.extend(ctx)
-        messages.append({"role": "user", "content": text})
-
-        reply = await chat(messages, mock=mock)
-
-        db.add_message(USER_ID, "user", text)
-        db.add_message(USER_ID, "assistant", reply)
-        db.add_long_memory(USER_ID, f"用户说：{text}")
-        db.add_long_memory(USER_ID, f"菟菚说：{reply}")
-        db.set_first_chat_done(USER_ID)
+        reply = await process(USER_ID, text, mock=mock)
 
         u = db.get_user(USER_ID)
         print(f"菟菚> {reply}")

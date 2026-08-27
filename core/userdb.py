@@ -150,10 +150,12 @@ class UserDB:
             (user_id,),
         ).fetchall()
         scored = []
+        # 短查询（如 2 字称呼）至少 1 个二元组命中即可，长查询要求 2 个
+        min_overlap = min(2, len(q_bigrams))
         for r in rows:
             content_bigrams = _bigrams(r["content"])
             overlap = len(q_bigrams & content_bigrams)
-            if overlap >= 2:
+            if overlap >= min_overlap:
                 scored.append((overlap, r["content"]))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [{"content": c} for _, c in scored[:top_k]]

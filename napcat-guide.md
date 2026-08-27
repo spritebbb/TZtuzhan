@@ -21,7 +21,7 @@ NapCat 是 QQNT 的协议实现，负责让 bot 能收发 QQ 私聊消息。
 
 1. 打开 NapCat 的配置面板（WebUI 或配置文件 `config/onebot11_<qq号>.json`）
 2. 找到 **OneBot 11 设置**，开启「正向 WebSocket 服务端」（正向 WS）
-3. 端口保持默认 **3001**（或自定义，但需同步修改 `maibot/.env` 里的 `ONEBOT_WS_URLS`）
+3. 端口保持默认 **3001**（或自定义，但需同步修改 `TZtuzhan/.env` 里的 `ONEBOT_WS_URLS`）
 4. 保存并重启 NapCat 使配置生效
 
 `onebot11_<qq号>.json` 关键字段示例：
@@ -46,7 +46,7 @@ Get-NetTCPConnection -LocalPort 3001 -State Listen
 有输出即成功。然后运行 bot：
 
 ```powershell
-cd D:\DSH\maibot
+cd D:\DSH\TZtuzhan
 .\.venv\Scripts\python.exe bot.py
 ```
 

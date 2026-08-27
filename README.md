@@ -1,4 +1,4 @@
-# 菟菚 bot（maibot）
+# 菟菚 bot（TZtuzhan）
 
 固定单人格 · QQ 私聊 · 完整记忆（短期 + 长期）· 好感度系统
 
@@ -7,7 +7,7 @@
 ## 项目结构
 
 ```
-maibot/
+TZtuzhan/
 ├── bot.py                  # NoneBot2 入口（python bot.py）
 ├── debug_cli.py            # 本地调试 CLI（不依赖 QQ，终端直接聊天）
 ├── requirements.txt        # Python 依赖
@@ -31,14 +31,22 @@ maibot/
 
 ### 1. 安装依赖（Python 3.10+）
 
+**一键脚本**（推荐，国内网络加 `-Mirror` 走清华镜像）：
+
 ```powershell
-cd D:\DSH\maibot
-py -3.14 -m venv .venv
-py -3.14 -m pip --python .\.venv\Scripts\python.exe install --upgrade pip
-py -3.14 -m pip --python .\.venv\Scripts\python.exe install -r requirements.txt
+cd D:\DSH\TZtuzhan
+powershell -ExecutionPolicy Bypass -File setup.ps1 -Mirror
 ```
 
-（如果本机 `py` 不可用，把 `py -3.14` 换成 `python`）
+或手动执行：
+
+```powershell
+py -3.14 -m venv --without-pip .venv
+py -3.14 -m pip --python .\.venv\Scripts\python.exe install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple
+py -3.14 -m pip --python .\.venv\Scripts\python.exe install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+（如果本机 `py` 不可用，把 `py -3.14` 换成 `python`；`--without-pip` 方式是为了兼容 Python 3.14 的 ensurepip 问题）
 
 ### 2. 配置
 

@@ -12,6 +12,7 @@ import sys
 
 from core import affection
 from core.pipeline import process
+from core.search import web_search
 from core.userdb import db
 
 # 控制台统一用 UTF-8 输出，避免 GBK 编码器无法打印颜文字（´･ω･` 等）
@@ -40,6 +41,9 @@ async def main(mock: bool) -> None:
         if text.startswith(("/好感", "/aff")):
             _handle_aff_cmd(text)
             continue
+        if text.startswith(("/搜索", "/搜")):
+            _handle_search_cmd(text)
+            continue
 
         reply = await process(USER_ID, text, mock=mock)
 
@@ -60,6 +64,25 @@ def _handle_aff_cmd(raw: str) -> None:
         print("已设置 -> " + affection.describe(USER_ID))
     except ValueError:
         print("用法：/好感 80 或 /好感（查看当前），也可用 /aff")
+
+
+def _handle_search_cmd(raw: str) -> None:
+    """处理 /搜索 命令：联网搜索并展示结果。"""
+    query = raw.strip()
+    for pre in ("/搜索", "/搜"):
+        if query.startswith(pre):
+            query = query[len(pre):].lstrip(":： ")
+            break
+    if not query:
+        print("用法：/搜索 <关键词>")
+        return
+    print(f"正在搜索「{query}」...")
+    results = web_search(query)
+    if not results:
+        print("（未找到结果，或搜索引擎不可用）")
+        return
+    for r in results[:5]:
+        print(f"- {r['title']} | {r['snippet'][:60]} | {r['url']}")
 
 
 def _ask_reset() -> None:

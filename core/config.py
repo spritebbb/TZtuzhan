@@ -21,6 +21,7 @@ class Config:
         self.persona_file: Path = p if p.is_absolute() else (PROJECT_ROOT / p)
 
         self.data_dir: Path = PROJECT_ROOT / "data"
+        self.search_enabled: bool = os.getenv("SEARCH_ENABLED", "1") != "0"
 
 
 config = Config()

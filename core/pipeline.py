@@ -10,6 +10,7 @@ from . import affection
 from .llm import chat, extract_address
 from .memory import recall, recall_facts, short_term_messages
 from .persona import build_system_prompt
+from .search import web_search
 from .userdb import db
 
 # 会话空闲判定：离上一条消息超过该分钟数，视为上一场聊完，补提尾部事实
@@ -34,6 +35,14 @@ _ADDRESS_ASK_WORDS = ("称呼你", "怎么称", "怎么叫", "叫你什么", "�
 def _asked_address(last_assistant: str | None) -> bool:
     """判断菟菚上一句是否在问称呼（用于捕捉用户直接报名字的情况）。"""
     return bool(last_assistant) and any(w in last_assistant for w in _ADDRESS_ASK_WORDS)
+
+
+_SEARCH_KEYS = ("搜索", "搜一下", "查一下", "帮我查", "查查", "新闻", "天气", "多少钱", "价格", "汇率", "现在几点", "最新", "今天有", "今天有没有")
+
+
+def _needs_search(text: str) -> bool:
+    """是否命中需要联网搜索的内容。"""
+    return any(k in text for k in _SEARCH_KEYS)
 
 # 称呼意图检测：判断「这句是否在设置称呼」（正则无法精确取名，只做判断 + mock 兜底）
 ADDRESS_RE = re.compile(
@@ -108,6 +117,11 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     facts = recall_facts(user_id, text)
     ctx = short_term_messages(user_id)
 
+    # 3.5) 联网搜索（命中需要搜索的关键词时）
+    search_hits = []
+    if not mock and _needs_search(text):
+        search_hits = web_search(text)
+
     # 4) 组装 prompt
     system = build_system_prompt(
         stage=affection.stage_of(user["affection"]),
@@ -130,6 +144,14 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
                 "role": "system",
                 "content": "你记住的关于对方的事（自然融入，不要复述）：\n"
                 + "\n".join(f"- {f}" for f in facts),
+            }
+        )
+    if search_hits:
+        snippets = "\n".join(f"- {h['title']}：{h['snippet']}" for h in search_hits[:5])
+        messages.append(
+            {
+                "role": "system",
+                "content": "你刚联网搜到以下信息（可能有误，请核对后再回答）：\n" + snippets,
             }
         )
     messages.extend(ctx)

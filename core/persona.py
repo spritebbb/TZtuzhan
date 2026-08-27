@@ -3,9 +3,27 @@
 人格源文件是项目内的 persona-菟菚.md（唯一人格来源），
 这里只负责读取，并按用户状态注入动态字段（阶段 / 称呼 / 关系状态）。
 """
+from datetime import datetime
+
 from .config import config
 
 _persona_cache: str | None = None
+
+_WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+
+def _now_line() -> str:
+    """当前时间的自然描述，供菟菚贴合现实时间说话。"""
+    now = datetime.now()
+    h = now.hour
+    period = (
+        "清晨" if h < 6
+        else "上午" if h < 12
+        else "中午" if h < 14
+        else "下午" if h < 18
+        else "晚上"
+    )
+    return f"现在时间：{now:%Y年%m月%d日} {_WEEKDAYS[now.weekday()]} {now:%H:%M}（{period}）"
 
 
 def load_persona() -> str:
@@ -50,10 +68,12 @@ def build_system_prompt(
 
     dynamic = (
         "\n\n## 当前状态（系统注入，不要复述本段）\n"
+        f"- {_now_line()}\n"
         f"- 当前好感度阶段：{stage}\n"
         f"- 你们的关系：{framing}\n"
         f"- 你对用户的称呼：{addr}\n"
         f"- 本轮注意：{note_text}\n"
-        "按以上阶段与关系行动。"
+        "结合以上信息（尤其现在时间）自然地说话、开场——下午就顺句下午的话，深夜就顺句熬夜的话；"
+        "别书呆子气地报时间，自然带进去就好。按以上阶段与关系行动。"
     )
     return persona + dynamic

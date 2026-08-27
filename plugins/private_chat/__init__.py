@@ -7,11 +7,13 @@ from nonebot.adapters.onebot.v11 import Message, PrivateMessageEvent
 
 from core import affection
 from core.pipeline import clean_address, process
+from core.search import web_search
 from core.userdb import db
 
 private_msg = on_message(priority=5, block=True)
 set_address_cmd = on_command("称呼", priority=4, block=True)
 aff_cmd = on_command("好感度", aliases={"好感", "aff"}, priority=4, block=True)
+search_cmd = on_command("搜索", aliases={"搜"}, priority=4, block=True)
 
 
 @private_msg.handle()
@@ -50,3 +52,15 @@ async def handle_aff(event: PrivateMessageEvent):
         await aff_cmd.finish(Message("已设置 -> " + affection.describe(uid)))
     except ValueError:
         await aff_cmd.finish(Message("用法：/好感 80 或 /好感（查看当前），也可用 /aff"))
+
+
+@search_cmd.handle()
+async def handle_search(event: PrivateMessageEvent):
+    text = event.get_plaintext().strip()
+    if not text:
+        await search_cmd.finish(Message("用法：/搜索 <关键词>"))
+    results = web_search(text)
+    if not results:
+        await search_cmd.finish(Message("没查到什么……换个说法我再试试？"))
+    lines = [f"{r['title']}：{r['snippet'][:80]}" for r in results[:5]]
+    await search_cmd.finish(Message("\n".join(lines)))

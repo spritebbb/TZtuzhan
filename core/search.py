@@ -28,6 +28,7 @@ def web_search(query: str, max_results: int = 5) -> list[dict]:
 
     engine = getattr(config, "search_engine", "bing")
     order = ["bing", "ddg"] if engine != "ddg" else ["ddg", "bing"]
+    errors = []
     for eng in order:
         results, err = (
             _bing_search(query, max_results) if eng == "bing" else _ddg_search(query, max_results)
@@ -35,13 +36,14 @@ def web_search(query: str, max_results: int = 5) -> list[dict]:
         if results:
             return results
         if err:
-            web_search_last_error = f"{eng}: {err}"
+            errors.append(f"{eng}: {err}")
+    web_search_last_error = "；".join(errors)
     return []
 
 
-def _bing_search(query: str, max_results: int):
+def _bing_search(query: str, max_results: int, host: str = "www.bing.com"):
     """通过 Bing 网页搜索（国内可访问）。返回 (results, error)。"""
-    url = "https://www.bing.com/search?q=" + urllib.parse.quote(query)
+    url = f"https://{host}/search?q=" + urllib.parse.quote(query)
     req = urllib.request.Request(
         url,
         headers={
@@ -53,6 +55,9 @@ def _bing_search(query: str, max_results: int):
     try:
         html = urllib.request.urlopen(req, timeout=10).read().decode("utf-8", "ignore")
     except Exception as e:
+        # www 失败就换国内域名 cn.bing.com 再试一次
+        if host == "www.bing.com":
+            return _bing_search(query, max_results, host="cn.bing.com")
         return [], f"网络错误: {e}"
 
     results: list[dict] = []
@@ -65,9 +70,7 @@ def _bing_search(query: str, max_results: int):
         snippet = re.sub(r"<[^>]+>", "", m_snippet.group(1)).strip() if m_snippet else ""
         results.append({"title": title, "snippet": snippet, "url": m_title.group(1)})
 
-    if not results:
-        return [], "解析到 0 条（Bing 可能返回了非结果页/验证页，结构可能变化）"
-    return results, ""
+    return results, ("" if results else "解析到 0 条（Bing 可能返回了非结果页/验证页）")
 
 
 def _ddg_search(query: str, max_results: int):

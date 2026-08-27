@@ -151,7 +151,12 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
         messages.append(
             {
                 "role": "system",
-                "content": "你刚联网搜到以下信息（可能有误，请核对后再回答）：\n" + snippets,
+                "content": (
+                    "你刚刚随手查了一下，看到这些信息（可能有误）：\n"
+                    + snippets
+                    + "\n把它们揉进你温柔、慵懒的语气里回答，像你刚好知道、随口告诉对方；"
+                    "不要生搬硬套、不要列成清单、不要说「根据搜索」「据我所知」这类报告腔。"
+                ),
             }
         )
     messages.extend(ctx)

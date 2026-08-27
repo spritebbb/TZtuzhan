@@ -9,6 +9,7 @@ from nonebot import on_command, on_message
 from nonebot.adapters.onebot.v11 import Message, PrivateMessageEvent
 
 from core import affection
+from core.config import config
 from core.pipeline import clean_address, process
 from core.search import last_error as search_last_error, web_search
 from core.userdb import db
@@ -73,7 +74,9 @@ async def _send_reply(reply: str) -> None:
     chunks = _split_reply(reply)
     for i, c in enumerate(chunks):
         if i > 0:
-            await asyncio.sleep(0.6)
+            # 间隔随消息稍长一点 + 基础间隔，更像真人一条条打
+            delay = config.send_interval + 0.02 * len(c)
+            await asyncio.sleep(delay)
         await private_msg.send(Message(c))
 
 

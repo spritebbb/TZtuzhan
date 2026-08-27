@@ -52,8 +52,14 @@ def build_system_prompt(
     lover_confirm: bool,
     first_chat: bool,
 ) -> str:
-    """组装最终 system prompt = 人格 + 当前用户状态注入。"""
+    """组装最终 system prompt = 人格 + 风格参考 + 当前用户状态注入。"""
     persona = load_persona()
+
+    # 网友风格参考（由 import_logs.py 从真实聊天记录生成；存在才注入）
+    style_ref = config.data_dir / "style_ref.txt"
+    if style_ref.exists():
+        persona += "\n\n" + style_ref.read_text(encoding="utf-8")
+
     addr = address or "你"
     framing = _STAGE_FRAMING.get(stage, _STAGE_FRAMING["初识"])
 

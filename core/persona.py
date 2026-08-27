@@ -19,6 +19,14 @@ def load_persona() -> str:
     return _persona_cache
 
 
+_STAGE_FRAMING = {
+    "初识": "你们是刚在网上认识的网友，彼此还不熟悉。",
+    "熟悉": "你们已经聊了一段时间，是比较熟悉的网友，有一些默契。",
+    "亲密": "你们非常亲近，彼此熟悉、信赖，很有默契。",
+    "恋人": "你们已经是恋人关系，感情很深，彼此信任、依恋、黏在一起。",
+}
+
+
 def build_system_prompt(
     *,
     stage: str,
@@ -29,11 +37,11 @@ def build_system_prompt(
     """组装最终 system prompt = 人格 + 当前用户状态注入。"""
     persona = load_persona()
     addr = address or "你"
-    relationship = "你们已经是恋人关系。" if lover_confirm else "恋人确认尚未进行。"
+    framing = _STAGE_FRAMING.get(stage, _STAGE_FRAMING["初识"])
 
     notes = []
-    if first_chat:
-        notes.append("这是你们的第一次对话，记得自然地询问对方想被怎么称呼。")
+    if first_chat and stage == "初识":
+        notes.append("这是你和对方的第一段对话，可以自然地询问对方想被怎么称呼。")
     if lover_confirm:
         notes.append("好感度刚达成恋人阶段，记得按「称呼机制」第二次确认称呼。")
     if addr != "你":
@@ -43,9 +51,9 @@ def build_system_prompt(
     dynamic = (
         "\n\n## 当前状态（系统注入，不要复述本段）\n"
         f"- 当前好感度阶段：{stage}\n"
+        f"- 你们的关系：{framing}\n"
         f"- 你对用户的称呼：{addr}\n"
-        f"- 关系状态：{relationship}\n"
         f"- 本轮注意：{note_text}\n"
-        "按以上阶段与称呼行动。"
+        "按以上阶段与关系行动。"
     )
     return persona + dynamic

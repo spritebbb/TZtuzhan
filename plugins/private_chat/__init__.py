@@ -25,8 +25,11 @@ proactive_cmd = on_command("主动", priority=4, block=True)
 
 @proactive_cmd.handle()
 async def handle_proactive(event: PrivateMessageEvent):
-    """测试/手动触发：菟菚主动发一条（模拟她想你了）。"""
+    """测试/手动触发：菟菚主动发一条（仅限配置的主动对象）。"""
     if not isinstance(event, PrivateMessageEvent):
+        return
+    if config.proactive_user_id and str(event.user_id) != config.proactive_user_id:
+        await proactive_cmd.finish(Message("……我只对一个人主动。"))
         return
     ok = await send_proactive_now(event.bot, str(event.user_id))
     if not ok:

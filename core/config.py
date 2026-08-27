@@ -37,6 +37,8 @@ class Config:
         self.proactive_check_minutes: float = float(os.getenv("PROACTIVE_CHECK_MINUTES", "15"))
         self.proactive_idle_hours: float = float(os.getenv("PROACTIVE_IDLE_HOURS", "4"))
         self.proactive_cooldown_hours: float = float(os.getenv("PROACTIVE_COOLDOWN_HOURS", "8"))
+        # 唯一允许被主动发消息的 QQ 号（设了后只对该号发；留空则对最后说话的人发）
+        self.proactive_user_id: str = os.getenv("PROACTIVE_USER_ID", "").strip()
 
 
 config = Config()

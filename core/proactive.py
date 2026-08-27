@@ -80,10 +80,11 @@ async def send_proactive_now(bot, user_id: str) -> bool:
 
 
 async def run_scheduler() -> None:
-    """后台定时任务：久别后主动发消息。"""
+    """后台定时任务：久别后主动发消息（只给 PROACTIVE_USER_ID 或最后说话的人）。"""
     while True:
         await asyncio.sleep(config.proactive_check_minutes * 60)
-        user_id = get_active_user()
+        # 限定只给配置的 QQ 号发；没配就用最后说话的人
+        user_id = config.proactive_user_id or get_active_user()
         if not user_id:
             continue
 

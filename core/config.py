@@ -33,5 +33,10 @@ class Config:
         # 网友式多条消息之间的发送间隔（秒）
         self.send_interval: float = float(os.getenv("SEND_INTERVAL", "3.0"))
 
+        # 主动发消息（久别后菟菚主动找你）
+        self.proactive_check_minutes: float = float(os.getenv("PROACTIVE_CHECK_MINUTES", "15"))
+        self.proactive_idle_hours: float = float(os.getenv("PROACTIVE_IDLE_HOURS", "4"))
+        self.proactive_cooldown_hours: float = float(os.getenv("PROACTIVE_COOLDOWN_HOURS", "8"))
+
 
 config = Config()

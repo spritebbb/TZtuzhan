@@ -11,6 +11,7 @@ from nonebot.adapters.onebot.v11 import Message, MessageSegment, PrivateMessageE
 from core import affection
 from core.config import config
 from core.pipeline import clean_address, process
+from core.proactive import send_proactive_now, set_active_user
 from core.search import last_error as search_last_error, web_search
 from core.userdb import db
 from core.vision import describe_image
@@ -19,12 +20,24 @@ private_msg = on_message(priority=5, block=True)
 set_address_cmd = on_command("称呼", priority=4, block=True)
 aff_cmd = on_command("好感度", aliases={"好感", "aff"}, priority=4, block=True)
 search_cmd = on_command("搜索", aliases={"搜"}, priority=4, block=True)
+proactive_cmd = on_command("主动", priority=4, block=True)
+
+
+@proactive_cmd.handle()
+async def handle_proactive(event: PrivateMessageEvent):
+    """测试/手动触发：菟菚主动发一条（模拟她想你了）。"""
+    if not isinstance(event, PrivateMessageEvent):
+        return
+    ok = await send_proactive_now(event.bot, str(event.user_id))
+    if not ok:
+        await proactive_cmd.finish(Message("……酝酿不出来，下次吧"))
 
 
 @private_msg.handle()
 async def handle_private(event: PrivateMessageEvent):
     if not isinstance(event, PrivateMessageEvent):
         return  # 只处理私聊，不接入群聊
+    set_active_user(str(event.user_id))  # 记住最近跟她说话的人，便于主动找她
     text = event.get_plaintext().strip()
     extras = []
     for seg in event.message:

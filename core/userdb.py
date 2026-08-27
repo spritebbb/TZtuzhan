@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS users (
     first_chat_done INTEGER NOT NULL DEFAULT 0,
     last_chat_date  TEXT,
     last_batch_date TEXT,
-    style_profile   TEXT
+    style_profile   TEXT,
+    last_proactive  TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,6 +73,10 @@ class UserDB:
             self.conn.execute("ALTER TABLE users ADD COLUMN style_profile TEXT")
         except sqlite3.OperationalError:
             pass
+        try:
+            self.conn.execute("ALTER TABLE users ADD COLUMN last_proactive TEXT")
+        except sqlite3.OperationalError:
+            pass
         self.conn.commit()
 
     # ---- users ----
@@ -117,6 +122,19 @@ class UserDB:
             "SELECT style_profile FROM users WHERE user_id = ?", (user_id,)
         ).fetchone()
         return (row["style_profile"] or "") if row else ""
+
+    def get_last_proactive(self, user_id: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT last_proactive FROM users WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return (row["last_proactive"] or None) if row else None
+
+    def set_last_proactive(self, user_id: str) -> None:
+        self.conn.execute(
+            "UPDATE users SET last_proactive = ? WHERE user_id = ?",
+            (datetime.now().isoformat(timespec="seconds"), user_id),
+        )
+        self.conn.commit()
 
     def set_affection_absolute(self, user_id: str, value: int) -> None:
         """直接把好感度设为指定值（0-100），用于手动调节/调试。"""

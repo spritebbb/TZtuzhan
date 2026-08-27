@@ -58,6 +58,12 @@ def clean_address(name: str) -> str:
     return name.rstrip(_TRAIL_CHARS)
 
 
+def _extract_reply(text: str) -> str:
+    """从「先思考后发言」的输出里提取【回复】段；无标记则整段当回复。"""
+    m = re.search(r"【回复】\s*(.*)", text, re.S)
+    return m.group(1).strip() if m else text.strip()
+
+
 _PAREN_RE = re.compile(r"（[^）]*）|\([^)]*\)")
 
 
@@ -217,8 +223,21 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
             }
         )
 
-    # 5) 调用 LLM；剥离括号旁白（动作/语气/屏幕提示），只留台词
-    reply = strip_actions(await chat(messages, mock=mock))
+    # 5) 先思考再说话：让模型输出【思考】+【回复】，只把【回复】发给对方
+    messages.append(
+        {
+            "role": "system",
+            "content": (
+                "回复前先在心里想一想，感受对方这句话背后的情绪和意图，掂量怎么接最自然、分寸怎么拿捏。"
+                "然后输出两段：\n"
+                "【思考】你内心真实的想法（用你自己的语气，不发给对方，不用客套）\n"
+                "【回复】你实际发给对方的话（保持你的风格：短句、慵懒温柔、像发消息一截一截）\n"
+                "两段都要写，【回复】才是对方会看到的。"
+            ),
+        }
+    )
+    raw = await chat(messages, mock=mock)
+    reply = strip_actions(_extract_reply(raw))
 
     # 6) 存档
     db.add_message(user_id, "user", text)

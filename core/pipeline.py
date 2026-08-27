@@ -73,6 +73,35 @@ def strip_actions(text: str) -> str:
     return _PAREN_RE.sub("", text).strip()
 
 
+# 告别场景：用户说了这些，菟菚只需一句简短道别，不复读、不刷屏
+_FAREWELL_RE = re.compile(r"(晚安|再见|拜拜|明天见|睡啦|睡了|先睡了|我睡了|告辞|886|睡了睡了)")
+_FAREWELL_REPLY = {
+    "晚安": "晚安🌙",
+    "再见": "再见呀",
+    "拜拜": "拜拜",
+    "明天见": "明天见",
+}
+
+
+def trim_farewell(user_text: str, reply: str) -> str:
+    """告别语境兜底：若用户消息是道别词，把回复精简成一句道别，避免刷屏/复读。"""
+    m = _FAREWELL_RE.search(user_text)
+    if not m:
+        return reply
+    word = m.group(1)
+    # 若回复已经是一句简明道别（不长、无追问），保留
+    lines = [l for l in reply.splitlines() if l.strip() and not l.startswith("【")]
+    compact = " ".join(lines).strip()
+    # 道别答复：来自词表，或回复很短含道别词
+    if compact in _FAREWELL_REPLY.values():
+        return compact
+    if compact and len(compact) <= 8 and any(k in compact for k in ("晚安", "再见", "拜拜", "明天见", "睡")):
+        # 已经是简短道别，保留原样
+        return compact
+    # 否则收敛成一句道别（避免复读对方的词 + 多条刷屏）
+    return _FAREWELL_REPLY.get(word, f"{word}")
+
+
 async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     """处理一条用户消息，返回菟菚的回复。"""
     user = db.ensure_user(user_id)
@@ -155,10 +184,44 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     )
     messages = [{"role": "system", "content": system}]
 
-    # 4.1) 情感记忆：今天有没有特殊日子（生日/纪念日等）
+    # 4.0.5) 网络热梗：让菟菚熟知近期热梗，能在对话里自然使用
     try:
+        from .memes import get_current_memes, has_memes, schedule_refresh
+
+        schedule_refresh()  # 缓存过期则后台刷新（同 key 去重）
+        current_memes = get_current_memes()
+    except Exception:
+        logger.exception("[pipeline] 热梗读取失败")
+        current_memes = []
+    if current_memes:
+        lines = "\n".join(
+            f"- {m['term']}：{m['meaning']}（例：{m['example']}）" for m in current_memes
+        )
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "你最近了解的这些网络热梗（供你在合适的时机自然使用）：\n"
+                    + lines
+                    + "\n要真正理解它们的含义和语境再用，别生硬堆砌；"
+                    "只在对方的话或话题让你觉得合适时，自然地用上一两个，"
+                    "营造『你也是网上冲浪的人』的同频感；用得不顺就别用，别为玩梗而玩梗。"
+                ),
+            }
+        )
+
+    # 4.0) 日常对话里的特殊日子识别：用户这句若在告知/约定某个日子，自动记住
+    try:
+        from .date_memory import extract_from_message
         from .userdb import get_today_important_dates
 
+        newly_saved = await extract_from_message(user_id, text, mock=mock)
+    except Exception:
+        logger.exception("[pipeline] 特殊日子识别失败")
+        newly_saved = []
+
+    # 4.1) 情感记忆：今天有没有特殊日子（生日/纪念日等）
+    try:
         today_dates = get_today_important_dates(user_id)
     except Exception:
         logger.exception("[pipeline] 特殊日子查询失败")
@@ -291,14 +354,23 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
                 "回复前先在心里想一想，感受对方这句话背后的情绪和意图，掂量怎么接最自然、分寸怎么拿捏。"
                 "然后输出两段：\n"
                 "【思考】你内心真实的想法（用你自己的语气，不发给对方，不用客套）\n"
-                "【回复】你实际发给对方的话（保持你的风格：短句、慵懒温柔、像发消息一截一截）。"
+                "【回复】你实际发给对方的话（保持你的风格：短句、慵懒温柔、像发消息一截一截）。\n"
                 "条数完全看内容：接得住就一句，需要铺开就两句三句，别为了凑数或开头就固定成几段。\n"
+                "特别地，要会看语境判断「该不该继续说」：\n"
+                "- 对方说晚安/再见/结束话题/要睡觉去 → 你已经道过别或话已说到位，就**简短收尾，1 条最多**（如『晚安』『明天见』），"
+                "别接着发多条、别找新话题、别追问；对方已经说了『明天见』，你就别再重复一遍『明天见』。\n"
+                "- 对方的话你已经接住了、没有可延续的 → 回一句就够，不要为了显得热情而硬凑第二句。\n"
+                "- 真正值得展开的话题（对方在倾诉、问问题、抛梗、求安慰）→ 才多说几句。\n"
+                "另外，当你聊到或想到某个**具体的画面/景象**（眼前的花田、窗外的雨、桌上的猫、夕阳、星空…）时，"
+                "可以用一两句话把这个画面描述得生动、鲜活一点，然后自然地问对方『要不要看看』『想不想看』——"
+                "像是在分享你眼前的美好。但只在真的合适、你能自然地想到画面时才这样，别为了触发而硬编画面。\n"
                 "两段都要写，【回复】才是对方会看到的。"
             ),
         }
     )
     raw = await chat(messages, mock=mock)
     reply = strip_actions(_extract_reply(raw))
+    reply = trim_farewell(text, reply)
 
     # 6) 存档
     db.add_message(user_id, "user", text)

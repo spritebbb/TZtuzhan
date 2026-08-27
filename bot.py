@@ -14,13 +14,16 @@ nonebot.load_plugin("plugins.private_chat")
 
 
 @driver.on_startup
-async def _start_proactive_scheduler():
-    """启动「菟菚主动发消息」后台定时任务。"""
+async def _start_background_tasks():
+    """启动后台定时任务：主动发消息 + 定时刷新热梗。"""
     import asyncio
 
+    from core.memes import meme_refresh_loop
     from core.proactive import run_scheduler
 
     asyncio.create_task(run_scheduler())
+    # 热梗定时刷新：启动后立即刷一次，之后每小时刷（不依赖用户对话触发）
+    asyncio.create_task(meme_refresh_loop(3600))
 
 
 if __name__ == "__main__":

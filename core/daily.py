@@ -120,3 +120,11 @@ async def extract_facts(user_id: str, day: date | None = None) -> None:
     if style:
         db.set_style(user_id, style[:200])  # 逐渐学习对方说话风格
     db.set_last_fact_msg_id(user_id, done)
+
+    # 复盘识别特殊日子（每天兜底：从这段对话里补录用户明确说过的日子）
+    try:
+        from .date_memory import extract_from_transcript
+
+        await extract_from_transcript(user_id, transcript)
+    except Exception:
+        logger.exception("[日子记忆] {} 复盘识别失败", user_id)

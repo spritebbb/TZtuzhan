@@ -47,5 +47,10 @@ class Config:
         # 扩展成多个检索词再查长期记忆，提升召回；关闭则退回 v1 关键词检索
         self.memory_semantic: bool = os.getenv("MEMORY_SEMANTIC", "1") != "0"
 
+        # 图像生成（SiliconFlow 文生图；不配置则生图功能关闭）
+        self.image_base_url: str = os.getenv("IMAGE_BASE_URL", "https://api.siliconflow.cn/v1").strip()
+        self.image_api_key: str = os.getenv("IMAGE_API_KEY", "").strip()
+        self.image_model: str = os.getenv("IMAGE_MODEL", "Kwai-Kolors/Kolors").strip()
+
 
 config = Config()

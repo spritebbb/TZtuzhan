@@ -8,6 +8,7 @@
 - user_meta     事实提炼游标等元数据
 - affection_log 好感度变动流水
 """
+import re
 import sqlite3
 import time
 from datetime import date, datetime
@@ -65,10 +66,20 @@ CREATE TABLE IF NOT EXISTS important_dates (
     year    INTEGER,           -- 有年份则存具体年份；无年份 NULL = 每年
     ts      TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS stickers (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id  TEXT NOT NULL,    -- 收藏者（哪个用户发的）
+    file     TEXT NOT NULL,    -- 本地缓存文件路径
+    url      TEXT NOT NULL,    -- 原始图片 URL
+    desc     TEXT NOT NULL DEFAULT '',  -- 视觉模型描述（用于话题匹配回发）
+    count    INTEGER NOT NULL DEFAULT 1, -- 该表情被看到/收藏的次数
+    ts       TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_long_memory_user ON long_memory(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_facts_user ON facts(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_dates_user ON important_dates(user_id);
+CREATE INDEX IF NOT EXISTS idx_stickers_user ON stickers(user_id);
 """
 
 
@@ -419,6 +430,70 @@ def delete_important_date(date_id: int) -> None:
     """删除一条特殊日子记录。"""
     db.conn.execute("DELETE FROM important_dates WHERE id = ?", (date_id,))
     db.conn.commit()
+
+
+# ---- stickers（表情包收藏）----
+
+
+def save_sticker(user_id: str, file: str, url: str, desc: str) -> int:
+    """收藏一张用户发的表情包；同 URL 已存在则累计 count，返回记录 id。"""
+    db.conn.execute("PRAGMA busy_timeout = 5000")
+    try:
+        row = db.conn.execute(
+            "SELECT id FROM stickers WHERE user_id = ? AND url = ?", (user_id, url)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        db.conn.executescript(_SCHEMA)  # 旧库补建表
+        row = db.conn.execute(
+            "SELECT id FROM stickers WHERE user_id = ? AND url = ?", (user_id, url)
+        ).fetchone()
+    if row:
+        db.conn.execute(
+            "UPDATE stickers SET count = count + 1, desc = CASE WHEN desc = '' THEN ? ELSE desc END "
+            "WHERE id = ?",
+            (desc, row["id"]),
+        )
+        db.conn.commit()
+        return row["id"]
+    cur = db.conn.execute(
+        "INSERT INTO stickers (user_id, file, url, desc, count, ts) VALUES (?, ?, ?, ?, 1, ?)",
+        (user_id, file, url, desc, datetime.now().isoformat(timespec="seconds")),
+    )
+    db.conn.commit()
+    return cur.lastrowid
+
+
+def get_stickers(user_id: str, limit: int = 50) -> list[dict]:
+    """取该用户收藏的表情包（按出现次数排序，热门靠前）。"""
+    rows = db.conn.execute(
+        "SELECT * FROM stickers WHERE user_id = ? ORDER BY count DESC, id DESC LIMIT ?",
+        (user_id, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_sticker_by_desc(user_id: str, keyword: str, limit: int = 30) -> list[dict]:
+    """按描述关键词挑表情包（话题匹配回发）。
+
+    用「描述里是否包含关键词的任一词/子串」判断（对中文单字词友好），
+    有多词时按命中词数排序。keyword 为空返回热门几张。
+    """
+    kw = re.split(r"[\s,，。！、/]+", keyword.strip())
+    kw = [k for k in kw if k]
+    if not kw:
+        return []
+    rows = db.conn.execute(
+        "SELECT * FROM stickers WHERE user_id = ? ORDER BY count DESC LIMIT 300",
+        (user_id,),
+    ).fetchall()
+    scored = []
+    for r in rows:
+        desc = r["desc"] or ""
+        hits = sum(1 for k in kw if k in desc)
+        if hits > 0:
+            scored.append((hits, dict(r)))
+    scored.sort(key=lambda x: (x[0], -x[1].get("count", 0)), reverse=True)
+    return [d for _, d in scored[:limit]]
 
 
 db = UserDB()

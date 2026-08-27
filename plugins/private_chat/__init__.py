@@ -5,15 +5,19 @@
 import asyncio
 import random
 import re
+from pathlib import Path
 
 from nonebot import on_command, on_message
 from nonebot.adapters.onebot.v11 import Message, MessageSegment, PrivateMessageEvent
 
 from core import affection
 from core.config import config
+from core.imagegen import generate as generate_image
+from core.log import logger
 from core.pipeline import clean_address, process
 from core.proactive import send_proactive_now, set_active_user
 from core.search import last_error as search_last_error, web_search
+from core.sticker import collect as collect_sticker, pick as pick_sticker
 from core.userdb import (
     db,
     delete_important_date,
@@ -29,6 +33,7 @@ aff_cmd = on_command("好感度", aliases={"好感", "aff"}, priority=4, block=T
 search_cmd = on_command("搜索", aliases={"搜"}, priority=4, block=True)
 proactive_cmd = on_command("主动", priority=4, block=True)
 dates_cmd = on_command("日子", aliases={"特殊日子", "纪念日"}, priority=4, block=True)
+draw_cmd = on_command("画", aliases={"画画", "生成图片", "生图", "图片"}, priority=4, block=True)
 
 
 def _cmd_arg(plain: str, *names: str) -> str:
@@ -60,6 +65,30 @@ async def handle_proactive(event: PrivateMessageEvent):
         await proactive_cmd.finish(Message("……酝酿不出来，下次吧"))
 
 
+@draw_cmd.handle()
+async def handle_draw(event: PrivateMessageEvent):
+    """画图：/画 <描述> → 菟菚生成一张图发过来。"""
+    if not isinstance(event, PrivateMessageEvent):
+        return
+    plain = event.get_plaintext().strip()
+    prompt = _cmd_arg(plain, "画", "画画", "生成图片", "生图", "图片")
+    if not prompt:
+        await draw_cmd.finish(Message("想让我画什么呀？说个画面给我，比如：画 一只趴在窗台上的猫"))
+        return
+    await draw_cmd.send(Message("嗯……我画给你，稍等一下呀～"))
+    # 在 prompt 里强化菟菚的风格：温暖、治愈、在线感
+    enhanced = f"温暖治愈系插画风格，{prompt}，色调柔和，可爱，有生活气息"
+    path = await generate_image(enhanced)
+    if not path:
+        await draw_cmd.finish(Message("……画到一半颜料没了，换个说法再试试？（生图服务没配好或生成失败）"))
+        return
+    try:
+        await draw_cmd.send(Message(MessageSegment.image(file=path)))
+    except Exception:
+        logger.exception("[生图] 发送失败")
+        await draw_cmd.finish(Message("画好了，但发不出去……"))
+
+
 @private_msg.handle()
 async def handle_private(event: PrivateMessageEvent):
     if not isinstance(event, PrivateMessageEvent):
@@ -67,6 +96,7 @@ async def handle_private(event: PrivateMessageEvent):
     set_active_user(str(event.user_id))  # 记住最近跟她说话的人，便于主动找她
     text = event.get_plaintext().strip()
     extras = []
+    incoming_images: list[str] = []  # 用户这次发来的图片 URL（用于收藏）
     for seg in event.message:
         t = seg.type
         if t == "text":
@@ -77,6 +107,8 @@ async def handle_private(event: PrivateMessageEvent):
             url = seg.data.get("url") if isinstance(seg.data, dict) else None
             desc = await describe_image(url) if url else ""
             extras.append(f"[对方发来一张图片/表情包]" + (f"，内容是：{desc}" if desc else ""))
+            if url:
+                incoming_images.append(url)
         elif t == "at":
             extras.append("[@]")
         else:
@@ -90,6 +122,34 @@ async def handle_private(event: PrivateMessageEvent):
     except Exception as e:
         reply = f"……藤蔓打结了\n（{e}）"
     await _send_reply(reply)
+
+    # 主动搜集：把用户这次发来的表情包收藏起来（后台，不阻塞回复）
+    has_text = bool(text.strip())
+    if incoming_images and not has_text:
+        for url in incoming_images:
+            await collect_sticker(str(event.user_id), url)  # 收藏
+        # 收藏到后，回发一张（挑刚才那类的最新一张，或按用户的话匹配）
+        sticker = pick_sticker(str(event.user_id), text or "", 1)
+        if sticker:
+            await _send_sticker(event, sticker[0])
+
+    # 对话驱动生图：用户回应"想看"，就生成菟菚刚描述的眼前画面
+    try:
+        from core.draw_context import extract_scene, want_to_see
+        from core.imagegen import generate as gen
+
+        if want_to_see(text):
+            scene = await extract_scene(str(event.user_id))
+            if scene:
+                await private_msg.send(Message("给你看～我画给你呀"))
+                path = await gen(scene)
+                if path:
+                    await asyncio.sleep(config.think_delay * 0.7)
+                    await private_msg.send(Message(MessageSegment.image(file=path)))
+                else:
+                    await private_msg.send(Message("……画面在我脑子里，就是画不出来（生图没配好）"))
+    except Exception:
+        logger.exception("[生图] 对话生图失败")
 
 
 def _split_reply(reply: str, max_len: int = 26) -> list[str]:
@@ -138,6 +198,22 @@ def _maybe_append_emoji(chunks: list[str]) -> list[str]:
     fid = random.choice(_EMOJI_POOL)
     chunks[idx] = f"{chunks[idx]}[face:{fid}]"
     return chunks
+
+
+async def _send_sticker(event, sticker: dict) -> None:
+    """把一张收藏的表情包以 QQ 图片形式发给用户（本地文件路径）。
+
+    sticker: {"file": 本地路径, "desc": 描述}
+    """
+    try:
+        file_path = sticker.get("file")
+        if not file_path or not Path(file_path).exists():
+            return
+        # 酝酿一下，像真人随手发
+        await asyncio.sleep(config.think_delay * 0.6)
+        await private_msg.send(Message(MessageSegment.image(file=file_path)))
+    except Exception:
+        logger.exception("[表情回发] 发送失败：{}", sticker.get("file", ""))
 
 
 async def _send_reply(reply: str) -> None:

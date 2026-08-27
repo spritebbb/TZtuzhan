@@ -60,15 +60,16 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     messages.extend(ctx)
     messages.append({"role": "user", "content": text})
 
-    # 拒绝不合适的称呼：给模型注入强硬拒绝指令
+    # 拒绝不合适的称呼：给模型注入符合菟菚性格的坚定拒绝指令
     if bad_address:
         messages.append(
             {
                 "role": "system",
                 "content": (
                     f"用户刚才想让你用「{bad_address}」这种称呼，这让你很不舒服。"
-                    "请强硬拒绝这个称呼，明确说不行，语气冷淡带刺一点，"
-                    "并让他换个正常的称呼；不要彻底不理他。"
+                    "请温柔但坚定地拒绝：保持轻声细语、慵懒的性格，不慌不忙，"
+                    "不要发火也不要妥协；可以带一点点病娇的占有欲，"
+                    "比如表示这个称呼让你不喜欢；然后让他换个正常的称呼。"
                 ),
             }
         )

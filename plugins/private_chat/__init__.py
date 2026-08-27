@@ -2,6 +2,9 @@
 
 对话逻辑在 core/pipeline.process，本插件只负责 QQ 事件绑定。
 """
+import asyncio
+import re
+
 from nonebot import on_command, on_message
 from nonebot.adapters.onebot.v11 import Message, PrivateMessageEvent
 
@@ -45,7 +48,33 @@ async def handle_private(event: PrivateMessageEvent):
         reply = await process(str(event.user_id), full)
     except Exception as e:
         reply = f"……藤蔓打结了\n（{e}）"
-    await private_msg.finish(Message(reply))
+    await _send_reply(reply)
+
+
+def _split_reply(reply: str, max_len: int = 26) -> list[str]:
+    """把回复拆成适合逐条发送的短消息：按换行拆，超长句子再按标点拆。"""
+    chunks: list[str] = []
+    for part in re.split(r"\n+", reply):
+        part = part.strip()
+        if not part:
+            continue
+        if len(part) <= max_len:
+            chunks.append(part)
+        else:
+            for sub in re.split(r"(?<=[。！？，、；：])\s*", part):
+                sub = sub.strip()
+                if sub:
+                    chunks.append(sub)
+    return chunks or [reply]
+
+
+async def _send_reply(reply: str) -> None:
+    """像网友发消息一样，把回复拆成多条短消息，带间隔依次发送。"""
+    chunks = _split_reply(reply)
+    for i, c in enumerate(chunks):
+        if i > 0:
+            await asyncio.sleep(0.6)
+        await private_msg.send(Message(c))
 
 
 @set_address_cmd.handle()

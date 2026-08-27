@@ -41,9 +41,9 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     # 1) 好感度即时规则（含跨天回滚）
     await affection.on_message(user_id, text)
 
-    # 1.5) 惰性事实提炼（每约 12 条消息一次，让记忆当天就能用）
+    # 1.5) 惰性事实提炼（每约 10 条消息一次，让记忆当天就能用）
     try:
-        if db.max_message_id(user_id) - db.get_last_fact_msg_id(user_id) >= 12:
+        if db.max_message_id(user_id) - db.get_last_fact_msg_id(user_id) >= 10:
             from .daily import extract_facts  # 延迟导入避免循环
 
             await extract_facts(user_id)

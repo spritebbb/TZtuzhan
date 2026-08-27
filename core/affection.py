@@ -11,8 +11,9 @@ HOBBY_BONUS = 1         # 用户聊自己的爱好（每日总结判定，封顶
 RESPECT_BONUS = 1       # 尊重菟菚的喜好（每日总结判定）
 DISMISS_PENALTY = -3    # 轻视、不重视（每日总结判定）
 SPAM_PENALTY = -2       # 刷屏
-ABUSE_PENALTY = -5      # 辱骂
-BAD_ADDRESS_PENALTY = -5  # 要求不合适的称呼
+ABUSE_PENALTY = -5      # 辱骂（严重）
+BAD_ADDRESS_PENALTY = -2  # 要求不合适的称呼（轻扣）
+EARLY_CONFESSION_PENALTY = -1  # 过早表白/求婚（初识/熟悉阶段，轻扣）
 
 STAGE_THRESHOLDS = ((0, "初识"), (25, "熟悉"), (50, "亲密"), (75, "恋人"))
 

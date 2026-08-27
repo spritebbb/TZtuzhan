@@ -33,27 +33,31 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     # 1) 好感度即时规则（含跨天回滚）
     affection.on_message(user_id, text)
 
-    # 2) 称呼提取（仅尚无偏好时）；不合适的称呼 → 拒绝 + 扣好感度
+    # 2) 称呼与过分称呼处理（无论是否已设称呼，过分称呼都要检测并扣分）
     pref = user["nickname_pref"]
     bad_address = None
+    address_intent = ADDRESS_RE.search(text) is not None
+    candidate = None
     if not pref:
         if mock:
-            # 本地调试（无真实 LLM 可依赖）走正则兜底
+            m = ADDRESS_RE.search(text)
+            candidate = clean_address(m.group(1)) if m else None
+        elif address_intent or len(text) <= 12:
+            candidate = await extract_address(text)
+    elif address_intent:
+        # 已设称呼：仅在用户主动设置/更改称呼时检测（过分称呼同样扣分）
+        if mock:
             m = ADDRESS_RE.search(text)
             candidate = clean_address(m.group(1)) if m else None
         else:
-            # 精确提取交给 LLM；仅在检测到设置称呼的意图或消息很短时触发
-            if ADDRESS_RE.search(text) or len(text) <= 12:
-                candidate = await extract_address(text)
-            else:
-                candidate = None
-        if candidate:
-            if affection.check_bad_address(candidate):
-                db.update_affection(user_id, affection.BAD_ADDRESS_PENALTY, "要求不合适的称呼")
-                bad_address = candidate
-            else:
-                db.set_nickname(user_id, candidate)
-                pref = candidate
+            candidate = await extract_address(text)
+    if candidate:
+        if affection.check_bad_address(candidate):
+            db.update_affection(user_id, affection.BAD_ADDRESS_PENALTY, "要求不合适的称呼")
+            bad_address = candidate
+        else:
+            db.set_nickname(user_id, candidate)
+            pref = candidate
 
     # 3) 记忆与上下文
     remembered = recall(user_id, text)
@@ -92,9 +96,10 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
             }
         )
 
-    # 过早表白/求婚（初识/熟悉阶段）：当成变态，温柔拒绝
+    # 过早表白/求婚（初识/熟悉阶段）：当成变态，温柔拒绝 + 扣好感度
     stage = affection.stage_of(user["affection"])
     if stage in ("初识", "熟悉") and affection.check_early_confession(text):
+        db.update_affection(user_id, affection.EARLY_CONFESSION_PENALTY, "过早表白/求婚")
         messages.append(
             {
                 "role": "system",

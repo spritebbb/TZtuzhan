@@ -25,6 +25,14 @@ def clean_address(name: str) -> str:
     return name.rstrip(_TRAIL_CHARS)
 
 
+_PAREN_RE = re.compile(r"（[^）]*）|\([^)]*\)")
+
+
+def strip_actions(text: str) -> str:
+    """移除模型输出里的任何括号旁白（动作/语气/屏幕提示），只留台词。"""
+    return _PAREN_RE.sub("", text).strip()
+
+
 async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     """处理一条用户消息，返回菟菚的回复。"""
     user = db.ensure_user(user_id)
@@ -111,8 +119,8 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
             }
         )
 
-    # 5) 调用 LLM
-    reply = await chat(messages, mock=mock)
+    # 5) 调用 LLM；剥离括号旁白（动作/语气/屏幕提示），只留台词
+    reply = strip_actions(await chat(messages, mock=mock))
 
     # 6) 存档
     db.add_message(user_id, "user", text)

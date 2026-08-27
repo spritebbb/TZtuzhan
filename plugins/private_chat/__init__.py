@@ -16,11 +16,31 @@ aff_cmd = on_command("好感度", aliases={"好感", "aff"}, priority=4, block=T
 search_cmd = on_command("搜索", aliases={"搜"}, priority=4, block=True)
 
 
+def _describe_message(event: PrivateMessageEvent) -> str:
+    """把消息转成可读文本，含表情/图片等非文字段的描述，让菟菚能读到。"""
+    text = event.get_plaintext().strip()
+    parts = []
+    for seg in event.message:
+        t = seg.type
+        if t == "text":
+            continue  # 已在 plaintext 里
+        elif t == "face":
+            parts.append("[QQ表情]")
+        elif t == "image":
+            parts.append("[图片/表情包]")
+        elif t == "at":
+            parts.append("[@]")
+        else:
+            parts.append(f"[{t}]")
+    non_text = " ".join(parts)
+    return (text + " " + non_text).strip()
+
+
 @private_msg.handle()
 async def handle_private(event: PrivateMessageEvent):
     if not isinstance(event, PrivateMessageEvent):
         return  # 只处理私聊，不接入群聊
-    text = event.get_plaintext().strip()
+    text = _describe_message(event)
     if not text:
         await private_msg.finish(Message("……"))
     try:

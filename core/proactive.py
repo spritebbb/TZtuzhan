@@ -7,6 +7,7 @@
   关系阶段调整语气与频率
 """
 import asyncio
+import random
 from datetime import datetime
 
 from . import affection
@@ -154,6 +155,18 @@ async def send_proactive_now(bot, user_id: str) -> bool:
             kv_set(user_id, "last_proactive_ts", datetime.datetime.now().isoformat(timespec="seconds"))
         except Exception:
             pass
+        # ⑥ 表情包主动推荐：用户有收藏时，约 1/4 概率在主动消息后带一张收藏的表情包
+        try:
+            if random.random() < 0.25:
+                from .sticker import get_recent_sticker
+                from nonebot.adapters.onebot.v11 import Message, MessageSegment
+
+                sticker = get_recent_sticker(user_id)
+                if sticker:
+                    await asyncio.sleep(config.send_interval)
+                    await bot.send_private_msg(user_id=int(user_id), message=Message(MessageSegment.image(file=sticker)))
+        except Exception:
+            logger.warning("[主动] 表情包推荐失败（不影响主动消息）")
         return True
     except Exception:
         logger.exception("[主动] 给 {} 发主动消息失败", user_id)
@@ -166,28 +179,39 @@ def _stage_cooldown_hours(user_id: str) -> float:
     return config.proactive_cooldown_hours * _STAGE_COOLDOWN_MULTIPLIER.get(stage, 1.0)
 
 
+def _target_user_ids() -> list[str]:
+    """主动消息目标：配置的多个 QQ 号；没配置则用最后说话的人。"""
+    if config.proactive_user_ids:
+        return list(config.proactive_user_ids)
+    au = get_active_user()
+    return [au] if au else []
+
+
 async def run_scheduler() -> None:
-    """后台定时任务：久别后主动发消息（只给 PROACTIVE_USER_ID 或最后说话的人）。"""
+    """后台定时任务：久别后主动发消息。
+
+    - ⑨ 支持多个 PROACTIVE_USER_ID（逗号分隔）
+    - ④ 频率控制：对方刚回复后进入冷静期不打扰；检查间隔带随机抖动避免死板节奏
+    """
     while True:
-        await asyncio.sleep(config.proactive_check_minutes * 60)
-        # 限定只给配置的 QQ 号发；没配就用最后说话的人
-        user_id = config.proactive_user_id or get_active_user()
-        if not user_id:
-            continue
+        # ④ 随机抖动：在基准间隔上 ±30%，避免"每 15 分钟整点"的机械感
+        base = config.proactive_check_minutes * 60
+        await asyncio.sleep(base * random.uniform(0.7, 1.3))
 
-        age = _age_hours(db.last_message_ts(user_id))
-        if age is None or age < config.proactive_idle_hours:
-            continue
-
-        last_pro = db.get_last_proactive(user_id)
-        if last_pro:
-            hours_since = _age_hours(last_pro)
-            if hours_since is not None and hours_since < _stage_cooldown_hours(user_id):
+        for user_id in _target_user_ids():
+            age = _age_hours(db.last_message_ts(user_id))
+            if age is None or age < config.proactive_idle_hours:
                 continue
 
-        try:
-            from nonebot import get_bot
+            last_pro = db.get_last_proactive(user_id)
+            if last_pro:
+                hours_since = _age_hours(last_pro)
+                if hours_since is not None and hours_since < _stage_cooldown_hours(user_id):
+                    continue
 
-            await send_proactive_now(get_bot(), user_id)
-        except Exception:
-            logger.exception("[主动] 定时主动发消息失败")
+            try:
+                from nonebot import get_bot
+
+                await send_proactive_now(get_bot(), user_id)
+            except Exception:
+                logger.exception("[主动] 定时主动发消息失败：{}", user_id)

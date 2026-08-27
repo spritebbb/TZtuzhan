@@ -71,5 +71,20 @@ def pick(user_id: str, keyword: str, limit: int = 30) -> list[dict]:
     return get_stickers(user_id, limit)
 
 
+def get_recent_sticker(user_id: str) -> str | None:
+    """挑一张用户最近收藏的表情包（本地路径），用于主动消息带图。
+
+    优先挑近期收藏（靠后的记录），返回文件路径；无收藏返回 None。
+    """
+    try:
+        stickers = get_stickers(user_id, 10)
+        if not stickers:
+            return None
+        # 取最后一张（最近收藏的）
+        return stickers[-1]["file"]
+    except Exception:
+        return None
+
+
 def count(user_id: str) -> int:
     return len(get_stickers(user_id, 500))

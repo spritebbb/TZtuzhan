@@ -227,12 +227,13 @@ class UserDB:
         ).fetchall()
 
     # ---- long memory ----
-    def add_long_memory(self, user_id: str, content: str) -> None:
-        self.conn.execute(
+    def add_long_memory(self, user_id: str, content: str) -> int:
+        cur = self.conn.execute(
             "INSERT INTO long_memory (user_id, content, ts) VALUES (?, ?, ?)",
             (user_id, content, datetime.now().isoformat(timespec="seconds")),
         )
         self.conn.commit()
+        return cur.lastrowid
 
     def search_long_memory(self, user_id: str, query: str, top_k: int):
         """v1 关键词检索：按中文字符二元组重叠打分，取 top_k。"""
@@ -281,11 +282,14 @@ class UserDB:
         return [{"content": c} for _, c in ranked[:top_k]]
 
     # ---- facts（LLM 提炼的长期事实）----
-    def add_fact(self, user_id: str, content: str) -> bool:
-        """存一条事实；与已有事实二元组重叠≥50% 视为重复则跳过。"""
+    def add_fact(self, user_id: str, content: str) -> int | None:
+        """存一条事实；与已有事实二元组重叠≥50% 视为重复则跳过。
+
+        返回新记录 id；重复/跳过返回 None。
+        """
         content = content.strip()
         if not content:
-            return False
+            return None
         q = _bigrams(content)
         rows = self.conn.execute(
             "SELECT content FROM facts WHERE user_id = ? ORDER BY id DESC LIMIT 200",
@@ -296,13 +300,13 @@ class UserDB:
             if q and existing:
                 overlap = len(q & existing) / min(len(q), len(existing))
                 if overlap >= 0.5:
-                    return False
-        self.conn.execute(
+                    return None
+        cur = self.conn.execute(
             "INSERT INTO facts (user_id, content, ts) VALUES (?, ?, ?)",
             (user_id, content, datetime.now().isoformat(timespec="seconds")),
         )
         self.conn.commit()
-        return True
+        return cur.lastrowid
 
     def search_facts(self, user_id: str, query: str, top_k: int):
         """按关键词（二元组）检索事实，取 top_k。"""

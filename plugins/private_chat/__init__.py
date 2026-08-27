@@ -57,8 +57,8 @@ async def handle_proactive(event: PrivateMessageEvent):
     """测试/手动触发：菟菚主动发一条（仅限配置的主动对象）。"""
     if not isinstance(event, PrivateMessageEvent):
         return
-    if config.proactive_user_id and str(event.user_id) != config.proactive_user_id:
-        await proactive_cmd.finish(Message("……我只对一个人主动。"))
+    if config.proactive_user_ids and str(event.user_id) not in config.proactive_user_ids:
+        await proactive_cmd.finish(Message("……我只对特定的人主动。"))
         return
     ok = await send_proactive_now(event.bot, str(event.user_id))
     if not ok:
@@ -80,7 +80,10 @@ async def handle_draw(event: PrivateMessageEvent):
     enhanced = f"温暖治愈系插画风格，{prompt}，色调柔和，可爱，有生活气息"
     path = await generate_image(enhanced)
     if not path:
-        await draw_cmd.finish(Message("……画到一半颜料没了，换个说法再试试？（生图服务没配好或生成失败）"))
+        from core.imagegen import last_error as img_last_error
+
+        hint = img_last_error() or "生图服务没配好或生成失败"
+        await draw_cmd.finish(Message(f"……画到一半颜料没了：{hint}"))
         return
     try:
         await draw_cmd.send(Message(MessageSegment.image(file=path)))
@@ -89,11 +92,18 @@ async def handle_draw(event: PrivateMessageEvent):
         await draw_cmd.finish(Message("画好了，但发不出去……"))
 
 
+# 消息去抖合并：用户连发消息时，短暂等待后合并为一条处理
+_DEBOUNCE_SECONDS = 2.2  # 连发窗口（此时间内到达的消息合并为一条）
+_pending_items: dict[str, list[dict]] = {}  # user_id → [{text, extras, images, event}]
+_debounce_tasks: dict[str, asyncio.Task] = {}  # user_id → asyncio.Task
+
+
 @private_msg.handle()
 async def handle_private(event: PrivateMessageEvent):
     if not isinstance(event, PrivateMessageEvent):
         return  # 只处理私聊，不接入群聊
     set_active_user(str(event.user_id))  # 记住最近跟她说话的人，便于主动找她
+    user_id = str(event.user_id)
     text = event.get_plaintext().strip()
     extras = []
     incoming_images: list[str] = []  # 用户这次发来的图片 URL（用于收藏）
@@ -114,40 +124,76 @@ async def handle_private(event: PrivateMessageEvent):
         else:
             extras.append(f"[{t}]")
 
-    full = (text + " " + " ".join(extras)).strip()
-    if not full:
-        await private_msg.finish(Message("……"))
+    # ③ 消息去抖：入队 + 重置计时器
+    _pending_items.setdefault(user_id, []).append(
+        {"text": text, "extras": extras, "images": incoming_images, "event": event}
+    )
+    task = _debounce_tasks.get(user_id)
+    if task:
+        task.cancel()
+    _debounce_tasks[user_id] = asyncio.create_task(_debounce_flush(user_id))
+
+
+async def _debounce_flush(user_id: str) -> None:
+    """去抖到点后：合并连发消息 → 走 pipeline → 发回复 → 副动作（收藏/生图）。"""
+    await asyncio.sleep(_DEBOUNCE_SECONDS)
+    items = _pending_items.pop(user_id, [])
+    _debounce_tasks.pop(user_id, None)
+    if not items:
+        return
+    bot = items[0]["event"].bot
+    # 合并连发消息
+    merged_parts: list[str] = []
+    incoming_images: list[str] = []
+    for it in items:
+        full = (it["text"] + " " + " ".join(it["extras"])).strip()
+        if full:
+            merged_parts.append(full)
+        incoming_images.extend(it["images"])
+    merged = "\n".join(merged_parts).strip() if merged_parts else ""
+    if not merged:
+        await bot.send_private_msg(user_id=int(user_id), message="……")
+        return
+    # 走 pipeline
     try:
-        reply = await process(str(event.user_id), full)
+        reply = await process(user_id, merged)
     except Exception as e:
         reply = f"……藤蔓打结了\n（{e}）"
-    await _send_reply(reply)
-
-    # 主动搜集：把用户这次发来的表情包收藏起来（后台，不阻塞回复）
-    has_text = bool(text.strip())
+    # 发送回复（用 bot API 直接发，不依赖 matcher）
+    await _send_reply_to(bot, user_id, reply)
+    # 副动作：收藏表情包（纯图才收藏）
+    has_text = bool(items[0]["text"].strip()) or any(it["text"].strip() for it in items)
     if incoming_images and not has_text:
         for url in incoming_images:
-            await collect_sticker(str(event.user_id), url)  # 收藏
-        # 收藏到后，回发一张（挑刚才那类的最新一张，或按用户的话匹配）
-        sticker = pick_sticker(str(event.user_id), text or "", 1)
+            await collect_sticker(user_id, url)
+        sticker = pick_sticker(user_id, "", 1)
         if sticker:
-            await _send_sticker(event, sticker[0])
-
-    # 对话驱动生图：用户回应"想看"，就生成菟菚刚描述的眼前画面
+            await _send_sticker_to(bot, user_id, sticker[0])
+    # 对话驱动生图：用户回应"想看"
     try:
         from core.draw_context import extract_scene, want_to_see
-        from core.imagegen import generate as gen
 
-        if want_to_see(text):
-            scene = await extract_scene(str(event.user_id))
+        if want_to_see(merged):
+            scene = await extract_scene(user_id)
             if scene:
-                await private_msg.send(Message("给你看～我画给你呀"))
-                path = await gen(scene)
+                await bot.send_private_msg(
+                    user_id=int(user_id), message=Message("给你看～我画给你呀")
+                )
+                path = await generate_image(scene)
                 if path:
                     await asyncio.sleep(config.think_delay * 0.7)
-                    await private_msg.send(Message(MessageSegment.image(file=path)))
+                    await bot.send_private_msg(
+                        user_id=int(user_id),
+                        message=Message(MessageSegment.image(file=path)),
+                    )
                 else:
-                    await private_msg.send(Message("……画面在我脑子里，就是画不出来（生图没配好）"))
+                    from core.imagegen import last_error as img_last_error
+
+                    hint = img_last_error() or "生图服务没配好"
+                    await bot.send_private_msg(
+                        user_id=int(user_id),
+                        message=Message(f"……画面在我脑子里，就是画不出来（{hint}）"),
+                    )
     except Exception:
         logger.exception("[生图] 对话生图失败")
 
@@ -216,6 +262,20 @@ async def _send_sticker(event, sticker: dict) -> None:
         logger.exception("[表情回发] 发送失败：{}", sticker.get("file", ""))
 
 
+async def _send_sticker_to(bot, user_id: str, sticker: dict) -> None:
+    """同 _send_sticker，但用 bot API 直接发（用于去抖 task）。"""
+    try:
+        file_path = sticker.get("file")
+        if not file_path or not Path(file_path).exists():
+            return
+        await asyncio.sleep(config.think_delay * 0.6)
+        await bot.send_private_msg(
+            user_id=int(user_id), message=Message(MessageSegment.image(file=file_path))
+        )
+    except Exception:
+        logger.exception("[表情回发] 发送失败：{}", sticker.get("file", ""))
+
+
 async def _send_reply(reply: str) -> None:
     """像网友发消息一样，把回复拆成多条短消息，带间隔依次发送。
 
@@ -232,6 +292,18 @@ async def _send_reply(reply: str) -> None:
             delay = config.send_interval + 0.02 * len(c)
             await asyncio.sleep(delay)
         await private_msg.send(_build_message(c))
+
+
+async def _send_reply_to(bot, user_id: str, reply: str) -> None:
+    """同 _send_reply，但用 bot API 直接发（不依赖 matcher 上下文，用于去抖 task）。"""
+    chunks = _split_reply(reply)
+    chunks = _maybe_append_emoji(chunks)
+    await asyncio.sleep(config.think_delay + 0.5 * max(0, len(chunks) - 1))
+    for i, c in enumerate(chunks):
+        if i > 0:
+            delay = config.send_interval + 0.02 * len(c)
+            await asyncio.sleep(delay)
+        await bot.send_private_msg(user_id=int(user_id), message=_build_message(c))
 
 
 @set_address_cmd.handle()

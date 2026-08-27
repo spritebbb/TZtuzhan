@@ -40,8 +40,9 @@ class Config:
         self.proactive_check_minutes: float = float(os.getenv("PROACTIVE_CHECK_MINUTES", "15"))
         self.proactive_idle_hours: float = float(os.getenv("PROACTIVE_IDLE_HOURS", "4"))
         self.proactive_cooldown_hours: float = float(os.getenv("PROACTIVE_COOLDOWN_HOURS", "8"))
-        # 唯一允许被主动发消息的 QQ 号（设了后只对该号发；留空则对最后说话的人发）
-        self.proactive_user_id: str = os.getenv("PROACTIVE_USER_ID", "").strip()
+        # 允许被主动发消息的 QQ 号（逗号分隔多个；留空则对最后说话的人发）
+        raw = os.getenv("PROACTIVE_USER_ID", "").strip()
+        self.proactive_user_ids: list[str] = [x.strip() for x in raw.split(",") if x.strip()]
 
         # 记忆语义检索：用户疑似回忆（上次/之前/还记得…）时，先用 LLM 把问题
         # 扩展成多个检索词再查长期记忆，提升召回；关闭则退回 v1 关键词检索

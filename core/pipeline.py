@@ -404,7 +404,16 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     # 6) 存档
     db.add_message(user_id, "user", text)
     db.add_message(user_id, "assistant", reply)
-    db.add_long_memory(user_id, f"用户说：{text}")
-    db.add_long_memory(user_id, f"菟菚说：{reply}")
+    lm1_id = db.add_long_memory(user_id, f"用户说：{text}")
+    lm2_id = db.add_long_memory(user_id, f"菟菚说：{reply}")
     db.set_first_chat_done(user_id)
+
+    # 6.1) 给新长期记忆建稠密向量索引（失败静默，不影响回复）
+    try:
+        from .vector_store import index as vec_index
+
+        vec_index(user_id, lm1_id, f"用户说：{text}")
+        vec_index(user_id, lm2_id, f"菟菚说：{reply}")
+    except Exception:
+        pass
     return reply

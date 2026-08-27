@@ -220,7 +220,34 @@ async def _recall_with_expansion(user_id: str, query: str, *, mock: bool = False
     # 用原句 + 扩展词一起做查询向量
     query_terms = _tokenize(query) + [t for t in terms if len(t) > 1]
     scored = _tfidf_candidates(query_terms, candidates, LONG_TERM_TOP_K)
-    return [doc for _, doc in scored]
+    tfidf_result = [doc for _, doc in scored]
+
+    # 补充稠密向量检索（把 TF-IDF 没排第一但语义相似度高的结果也拉进来）
+    try:
+        from .vector_store import search as vec_search
+
+        vec_results = vec_search(user_id, query, LONG_TERM_TOP_K)
+        if vec_results:
+            # 按 record_id 反查内容
+            existing_ids = set()
+            vec_docs: list[str] = []
+            for rid, dist in vec_results:
+                row = db.conn.execute(
+                    "SELECT content FROM long_memory WHERE user_id=? AND id=?", (user_id, rid)
+                ).fetchone()
+                if row and row["content"] not in existing_ids:
+                    existing_ids.add(row["content"])
+                    vec_docs.append(row["content"])
+            # 融合：向量结果排前面，TF-IDF 做补充（去重）
+            seen = set(vec_docs)
+            for doc in tfidf_result:
+                if doc not in seen:
+                    vec_docs.append(doc)
+                    seen.add(doc)
+            return vec_docs[:LONG_TERM_TOP_K]
+    except Exception:
+        logger.warning("[记忆] 向量检索补充失败，仅用 TF-IDF")
+    return tfidf_result
 
 
 async def _facts_with_expansion(user_id: str, query: str, *, mock: bool = False) -> list[str]:
@@ -234,4 +261,29 @@ async def _facts_with_expansion(user_id: str, query: str, *, mock: bool = False)
         return []
     query_terms = _tokenize(query) + [t for t in terms if len(t) > 1]
     scored = _tfidf_candidates(query_terms, candidates, LONG_TERM_TOP_K)
-    return [doc for _, doc in scored]
+    tfidf_result = [doc for _, doc in scored]
+
+    # 补充稠密向量检索
+    try:
+        from .vector_store import search as vec_search
+
+        vec_results = vec_search(user_id, query, LONG_TERM_TOP_K)
+        if vec_results:
+            existing_ids = set()
+            vec_docs: list[str] = []
+            for rid, dist in vec_results:
+                row = db.conn.execute(
+                    "SELECT content FROM facts WHERE user_id=? AND id=?", (user_id, rid)
+                ).fetchone()
+                if row and row["content"] not in existing_ids:
+                    existing_ids.add(row["content"])
+                    vec_docs.append(row["content"])
+            seen = set(vec_docs)
+            for doc in tfidf_result:
+                if doc not in seen:
+                    vec_docs.append(doc)
+                    seen.add(doc)
+            return vec_docs[:LONG_TERM_TOP_K]
+    except Exception:
+        logger.warning("[记忆] 事实向量检索补充失败，仅用 TF-IDF")
+    return tfidf_result

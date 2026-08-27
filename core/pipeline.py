@@ -108,6 +108,19 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     messages.extend(ctx)
     messages.append({"role": "user", "content": text})
 
+    # 对方回得很短 → 提示模型别让话题冷场（借一句接住）
+    if len(text) <= 4:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "对方这轮回得很短，话题有点冷场了。别让对话就这么结束——"
+                    "自然接一句：追问个小问题、抛个新话题、或轻轻调侃一下，保持慵懒但别冷场。"
+                    "（就一句，别啰嗦）"
+                ),
+            }
+        )
+
     # 拒绝不合适的称呼：给模型注入符合菟菚性格的坚定拒绝指令
     if bad_address:
         messages.append(

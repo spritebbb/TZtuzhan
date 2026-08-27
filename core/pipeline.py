@@ -27,6 +27,14 @@ def _long_gap(ts: str | None) -> bool:
         return False
     return (datetime.now() - t).total_seconds() >= _IDLE_SESSION_MINUTES * 60
 
+
+_ADDRESS_ASK_WORDS = ("称呼你", "怎么称", "怎么叫", "叫你什么", "想让你怎么称呼", "叫你", "叫法")
+
+
+def _asked_address(last_assistant: str | None) -> bool:
+    """判断菟菚上一句是否在问称呼（用于捕捉用户直接报名字的情况）。"""
+    return bool(last_assistant) and any(w in last_assistant for w in _ADDRESS_ASK_WORDS)
+
 # 称呼意图检测：判断「这句是否在设置称呼」（正则无法精确取名，只做判断 + mock 兜底）
 ADDRESS_RE = re.compile(
     r"(?:你可以叫我|可以叫我|以后叫我|以后就叫我|以后都叫我|叫我一声|叫我|喊我|称呼我|你叫我)[:：]?\s*"
@@ -78,7 +86,7 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
         if mock:
             m = ADDRESS_RE.search(text)
             candidate = clean_address(m.group(1)) if m else None
-        elif address_intent or len(text) <= 12:
+        elif address_intent or _asked_address(db.last_assistant_message(user_id)):
             candidate = await extract_address(text)
     elif address_intent:
         # 已设称呼：仅在用户主动设置/更改称呼时检测（过分称呼同样扣分）

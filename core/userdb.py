@@ -267,6 +267,14 @@ class UserDB:
         ).fetchone()
         return row["ts"] if row else None
 
+    def last_assistant_message(self, user_id: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT content FROM messages WHERE user_id = ? AND role = 'assistant' "
+            "ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        return row["content"] if row else None
+
     def reset(self) -> None:
         """清空所有数据（用于重复测试）。
 

@@ -9,6 +9,7 @@ from core import affection
 from core.pipeline import clean_address, process
 from core.search import last_error as search_last_error, web_search
 from core.userdb import db
+from core.vision import describe_image
 
 private_msg = on_message(priority=5, block=True)
 set_address_cmd = on_command("称呼", priority=4, block=True)
@@ -16,35 +17,32 @@ aff_cmd = on_command("好感度", aliases={"好感", "aff"}, priority=4, block=T
 search_cmd = on_command("搜索", aliases={"搜"}, priority=4, block=True)
 
 
-def _describe_message(event: PrivateMessageEvent) -> str:
-    """把消息转成可读文本，含表情/图片等非文字段的描述，让菟菚能读到。"""
+@private_msg.handle()
+async def handle_private(event: PrivateMessageEvent):
+    if not isinstance(event, PrivateMessageEvent):
+        return  # 只处理私聊，不接入群聊
     text = event.get_plaintext().strip()
-    parts = []
+    extras = []
     for seg in event.message:
         t = seg.type
         if t == "text":
             continue  # 已在 plaintext 里
         elif t == "face":
-            parts.append("[QQ表情]")
+            extras.append("[QQ表情]")
         elif t == "image":
-            parts.append("[图片/表情包]")
+            url = seg.data.get("url") if isinstance(seg.data, dict) else None
+            desc = await describe_image(url) if url else ""
+            extras.append(f"[图片/表情包]" + (f"（内容：{desc}）" if desc else ""))
         elif t == "at":
-            parts.append("[@]")
+            extras.append("[@]")
         else:
-            parts.append(f"[{t}]")
-    non_text = " ".join(parts)
-    return (text + " " + non_text).strip()
+            extras.append(f"[{t}]")
 
-
-@private_msg.handle()
-async def handle_private(event: PrivateMessageEvent):
-    if not isinstance(event, PrivateMessageEvent):
-        return  # 只处理私聊，不接入群聊
-    text = _describe_message(event)
-    if not text:
+    full = (text + " " + " ".join(extras)).strip()
+    if not full:
         await private_msg.finish(Message("……"))
     try:
-        reply = await process(str(event.user_id), text)
+        reply = await process(str(event.user_id), full)
     except Exception as e:
         reply = f"……藤蔓打结了\n（{e}）"
     await private_msg.finish(Message(reply))

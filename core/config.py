@@ -25,5 +25,10 @@ class Config:
         self.search_engine: str = os.getenv("SEARCH_ENGINE", "bing").lower()
         self.search_api_key: str = os.getenv("SEARCH_API_KEY", "").strip()
 
+        # 图片理解（独立的视觉模型；不配置则识图功能关闭，回到"表情包"泛指）
+        self.vision_base_url: str = os.getenv("VISION_BASE_URL", "").strip()
+        self.vision_api_key: str = os.getenv("VISION_API_KEY", "").strip()
+        self.vision_model: str = os.getenv("VISION_MODEL", "").strip()
+
 
 config = Config()

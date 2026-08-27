@@ -6,15 +6,15 @@
 import re
 
 from . import affection
-from .llm import chat
+from .llm import chat, extract_address
 from .memory import recall, short_term_messages
 from .persona import build_system_prompt
 from .userdb import db
 
-# 称呼提取：用户回复「叫我哥哥」「可以叫我以实玛利」这类句子时记录
+# 称呼意图检测：判断「这句是否在设置称呼」（正则无法精确取名，只做判断 + mock 兜底）
 ADDRESS_RE = re.compile(
-    r"(?:你可以叫我|可以叫我|以后叫我|以后就叫我|以后都叫我|叫我|喊我|称呼我|你叫我|叫我一声)[:：]?\s*"
-    r"[「『\"'“”《〈]*(\S{1,16})"
+    r"(?:你可以叫我|可以叫我|以后叫我|以后就叫我|以后都叫我|叫我一声|叫我|喊我|称呼我|你叫我)[:：]?\s*"
+    r"[「『\"'“”《〈]*([^吧呀嘛啊呢哦啦呗哈咯～~。，,、!！?？…\s]{1,8})"
 )
 _TRAIL_CHARS = "吧呀嘛啊呢哦啦呗哈咯～~。，,、!！?？…"
 
@@ -37,9 +37,17 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     pref = user["nickname_pref"]
     bad_address = None
     if not pref:
-        m = ADDRESS_RE.search(text)
-        if m:
-            candidate = clean_address(m.group(1)) or m.group(1)
+        if mock:
+            # 本地调试（无真实 LLM 可依赖）走正则兜底
+            m = ADDRESS_RE.search(text)
+            candidate = clean_address(m.group(1)) if m else None
+        else:
+            # 精确提取交给 LLM；仅在检测到设置称呼的意图或消息很短时触发
+            if ADDRESS_RE.search(text) or len(text) <= 12:
+                candidate = await extract_address(text)
+            else:
+                candidate = None
+        if candidate:
             if affection.check_bad_address(candidate):
                 db.update_affection(user_id, affection.BAD_ADDRESS_PENALTY, "要求不合适的称呼")
                 bad_address = candidate

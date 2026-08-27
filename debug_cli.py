@@ -37,7 +37,7 @@ async def main(mock: bool) -> None:
             continue
         if text in ("exit", "quit"):
             break
-        if text.startswith(("/好感度", "/aff")):
+        if text.startswith(("/好感", "/aff")):
             _handle_aff_cmd(text)
             continue
 
@@ -50,16 +50,16 @@ async def main(mock: bool) -> None:
 
 
 def _handle_aff_cmd(raw: str) -> None:
-    """处理 /好感度 命令：查看或设置好感度。"""
+    """处理 /好感 命令：查看或设置好感度。"""
     parts = raw.strip().split()
-    if len(parts) < 2:
+    if len(parts) < 2 or parts[1] in ("查看", "看", "查询", "当前"):
         print("当前 " + affection.describe(USER_ID))
         return
     try:
         affection.set_affection(USER_ID, int(parts[1]))
         print("已设置 -> " + affection.describe(USER_ID))
     except ValueError:
-        print("用法：/好感度 <0-100> 或 /好感度（查看当前）")
+        print("用法：/好感 80 或 /好感（查看当前），也可用 /aff")
 
 
 def _ask_reset() -> None:

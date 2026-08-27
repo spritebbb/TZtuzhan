@@ -11,7 +11,7 @@ from core.userdb import db
 
 private_msg = on_message(priority=5, block=True)
 set_address_cmd = on_command("称呼", priority=4, block=True)
-aff_cmd = on_command("好感度", aliases={"aff"}, priority=4, block=True)
+aff_cmd = on_command("好感度", aliases={"好感", "aff"}, priority=4, block=True)
 
 
 @private_msg.handle()
@@ -43,10 +43,10 @@ async def handle_set_address(event: PrivateMessageEvent):
 async def handle_aff(event: PrivateMessageEvent):
     text = event.get_plaintext().strip()
     uid = str(event.user_id)
-    if not text:
+    if not text or text in ("查看", "看", "查询", "当前"):
         await aff_cmd.finish(Message("当前 " + affection.describe(uid)))
     try:
         affection.set_affection(uid, int(text))
         await aff_cmd.finish(Message("已设置 -> " + affection.describe(uid)))
     except ValueError:
-        await aff_cmd.finish(Message("用法：/好感度 <0-100> 或 /好感度（查看当前）"))
+        await aff_cmd.finish(Message("用法：/好感 80 或 /好感（查看当前），也可用 /aff"))

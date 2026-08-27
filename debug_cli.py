@@ -25,7 +25,8 @@ USER_ID = "local-user"
 
 async def main(mock: bool) -> None:
     print("菟菚 · 本地调试模式" + ("（mock，无真实 LLM）" if mock else ""))
-    print("输入 exit 退出\n")
+    print("命令：exit 退出 · /好感度 查看 · /好感度 <0-100> 设置")
+    print()
 
     while True:
         try:
@@ -36,6 +37,9 @@ async def main(mock: bool) -> None:
             continue
         if text in ("exit", "quit"):
             break
+        if text.startswith(("/好感度", "/aff")):
+            _handle_aff_cmd(text)
+            continue
 
         reply = await process(USER_ID, text, mock=mock)
 
@@ -43,6 +47,19 @@ async def main(mock: bool) -> None:
         print(f"菟菚> {reply}")
         print(f"      [好感度 {u['affection']} · 阶段「{affection.stage_of(u['affection'])}」"
               f" · 称呼 {u['nickname_pref'] or '未设定'}]")
+
+
+def _handle_aff_cmd(raw: str) -> None:
+    """处理 /好感度 命令：查看或设置好感度。"""
+    parts = raw.strip().split()
+    if len(parts) < 2:
+        print("当前 " + affection.describe(USER_ID))
+        return
+    try:
+        affection.set_affection(USER_ID, int(parts[1]))
+        print("已设置 -> " + affection.describe(USER_ID))
+    except ValueError:
+        print("用法：/好感度 <0-100> 或 /好感度（查看当前）")
 
 
 def _ask_reset() -> None:

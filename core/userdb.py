@@ -86,6 +86,23 @@ class UserDB:
         )
         self.conn.commit()
 
+    def set_affection_absolute(self, user_id: str, value: int) -> None:
+        """直接把好感度设为指定值（0-100），用于手动调节/调试。"""
+        value = max(0, min(100, int(value)))
+        self.ensure_user(user_id)
+        cur = self.get_user(user_id)["affection"]
+        self.conn.execute(
+            "UPDATE users SET affection = ? WHERE user_id = ?", (value, user_id)
+        )
+        self.conn.execute(
+            "INSERT INTO affection_log (user_id, delta, reason, ts) VALUES (?, ?, ?, ?)",
+            (user_id, value - cur, "手动设置", datetime.now().isoformat(timespec="seconds")),
+        )
+        self.conn.commit()
+        u = self.get_user(user_id)
+        if u["affection"] >= 75 and not u["lover_confirm"]:
+            self.set_lover_confirm(user_id)
+
     def set_lover_confirm(self, user_id: str) -> None:
         self.conn.execute(
             "UPDATE users SET lover_confirm = 1 WHERE user_id = ?", (user_id,)

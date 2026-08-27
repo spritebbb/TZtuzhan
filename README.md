@@ -63,6 +63,8 @@ Copy-Item .env.example .env
 .\.venv\Scripts\python.exe debug_cli.py --reset    # 强制清除本地数据（记忆/好感度/称呼），跳过询问
 ```
 
+> 调试命令：`/好感度` 查看当前，`/好感度 80` 直接设置 0-100（QQ 私聊里同样可用 `/好感度 80`，别名 `/aff`）。设置到 75+ 会自动进入「恋人」阶段。
+
 ### 3. 部署 NapCat 并运行
 
 1. 按 `napcat-guide.md` 部署 NapCat，开启正向 WebSocket（默认 `ws://127.0.0.1:3001`）

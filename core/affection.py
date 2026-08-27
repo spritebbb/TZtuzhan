@@ -52,6 +52,19 @@ def stage_of(affection: int) -> str:
     return label
 
 
+def set_affection(user_id: str, value: int) -> None:
+    """手动设置好感度（0-100），用于调试/调节。"""
+    db.set_affection_absolute(user_id, value)
+
+
+def describe(user_id: str) -> str:
+    """返回该用户好感度与阶段的描述文本。"""
+    u = db.get_user(user_id)
+    if not u:
+        return "尚未有记录"
+    return f"好感度 {u['affection']} · 阶段「{stage_of(u['affection'])}」"
+
+
 def check_abuse(text: str) -> bool:
     lowered = text.lower()
     return any(w in lowered for w in ABUSE_WORDS)

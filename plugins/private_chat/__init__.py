@@ -32,7 +32,7 @@ async def handle_private(event: PrivateMessageEvent):
         elif t == "image":
             url = seg.data.get("url") if isinstance(seg.data, dict) else None
             desc = await describe_image(url) if url else ""
-            extras.append(f"[图片/表情包]" + (f"（内容：{desc}）" if desc else ""))
+            extras.append(f"[对方发来一张图片/表情包]" + (f"，内容是：{desc}" if desc else ""))
         elif t == "at":
             extras.append("[@]")
         else:

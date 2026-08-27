@@ -16,11 +16,11 @@ set_address_cmd = on_command("称呼", priority=4, block=True)
 async def handle_private(event: PrivateMessageEvent):
     text = event.get_plaintext().strip()
     if not text:
-        await private_msg.finish(Message("……(´･ω･`)"))
+        await private_msg.finish(Message("……"))
     try:
         reply = await process(str(event.user_id), text)
     except Exception as e:
-        reply = f"……藤蔓打结了(´･_･`)\n（{e}）"
+        reply = f"……藤蔓打结了\n（{e}）"
     await private_msg.finish(Message(reply))
 
 
@@ -30,4 +30,4 @@ async def handle_set_address(event: PrivateMessageEvent):
     if not text:
         await set_address_cmd.finish(Message("用法：/称呼 哥哥"))
     db.set_nickname(str(event.user_id), text)
-    await set_address_cmd.finish(Message(f"好，以后就这么叫你：{text}(￣▽￣)"))
+    await set_address_cmd.finish(Message(f"好，以后就这么叫你：{text}"))

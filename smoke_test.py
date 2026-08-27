@@ -6,10 +6,14 @@
 末尾的「滚开」会触发「辱骂」扣分——这是预期行为，用来验证检测逻辑。
 """
 import asyncio
+import sys
 
 from core import affection
 from core.pipeline import process
 from core.userdb import db
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 USER_ID = "smoke-user"
 

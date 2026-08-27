@@ -8,10 +8,17 @@
 """
 import argparse
 import asyncio
+import sys
 
 from core import affection
 from core.pipeline import process
 from core.userdb import db
+
+# 控制台统一用 UTF-8 输出，避免 GBK 编码器无法打印颜文字（´･ω･` 等）
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 USER_ID = "local-user"
 

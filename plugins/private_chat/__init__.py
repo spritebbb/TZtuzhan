@@ -6,7 +6,7 @@ from nonebot import on_command, on_message
 from nonebot.adapters.onebot.v11 import Message, PrivateMessageEvent
 
 from core import affection
-from core.pipeline import process
+from core.pipeline import clean_address, process
 from core.userdb import db
 
 private_msg = on_message(priority=5, block=True)
@@ -30,8 +30,9 @@ async def handle_set_address(event: PrivateMessageEvent):
     text = event.get_plaintext().strip()
     if not text:
         await set_address_cmd.finish(Message("用法：/称呼 哥哥"))
-    if affection.check_bad_address(text):
+    name = clean_address(text) or text
+    if affection.check_bad_address(name):
         db.update_affection(str(event.user_id), affection.BAD_ADDRESS_PENALTY, "要求不合适的称呼")
         await set_address_cmd.finish(Message("这个称呼，我不喜欢呢……换一个吧。"))
-    db.set_nickname(str(event.user_id), text)
-    await set_address_cmd.finish(Message(f"好，以后就这么叫你：{text}"))
+    db.set_nickname(str(event.user_id), name)
+    await set_address_cmd.finish(Message(f"好，以后就这么叫你：{name}"))

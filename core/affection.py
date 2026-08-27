@@ -30,6 +30,12 @@ BAD_ADDRESS_WORDS = [
     "爸爸", "爹", "爹爹", "爷爷", "奶奶", "祖宗",
 ]
 
+# 过早表白/求婚词（初识/熟悉阶段视为变态行为，拒绝；亲密/恋人阶段不受限）
+EARLY_CONFESSION_WORDS = [
+    "结婚", "嫁给我", "娶我", "求婚", "当我女朋友", "当我老婆", "当我男朋友", "当我老公",
+    "做我女朋友", "做我老婆", "我喜欢你", "我爱你", "永远在一起", "私奔",
+]
+
 _SPAM_WINDOW_SECONDS = 10
 _SPAM_MAX_COUNT = 3
 
@@ -53,6 +59,11 @@ def check_abuse(text: str) -> bool:
 def check_bad_address(name: str) -> bool:
     """判断是否为不合适的称呼（侮辱类 / 失当亲属称谓）。"""
     return any(w in name for w in BAD_ADDRESS_WORDS)
+
+
+def check_early_confession(text: str) -> bool:
+    """判断是否为过早的表白/求婚（初识/熟悉阶段触发拒绝）。"""
+    return any(w in text for w in EARLY_CONFESSION_WORDS)
 
 
 def _spam_hit(user_id: str) -> bool:

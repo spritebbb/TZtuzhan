@@ -36,6 +36,8 @@ def build_system_prompt(
         notes.append("这是你们的第一次对话，记得自然地询问对方想被怎么称呼。")
     if lover_confirm:
         notes.append("好感度刚达成恋人阶段，记得按「称呼机制」第二次确认称呼。")
+    if addr != "你":
+        notes.append("称呼已经确认，不要重复询问称呼；除非用户主动要求更改，或达成恋人阶段需要第二次确认。")
     note_text = "\n".join(f"- {n}" for n in notes) if notes else "无。"
 
     dynamic = (

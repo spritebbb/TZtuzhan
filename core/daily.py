@@ -8,6 +8,7 @@ from datetime import date
 
 from . import affection
 from .llm import chat
+from .pipeline import clean_address
 from .userdb import db
 
 JUDGE_PROMPT = """你是「菟菚」的好感度管理员。根据以下某用户与菟菚昨天的对话记录，判断并只输出 JSON：
@@ -52,4 +53,4 @@ def run_daily_batch(user_id: str, day: date) -> None:
 
     addr = (data.get("address") or "").strip()
     if addr and not db.get_user(user_id)["nickname_pref"] and not affection.check_bad_address(addr):
-        db.set_nickname(user_id, addr[:12])
+        db.set_nickname(user_id, clean_address(addr)[:12])

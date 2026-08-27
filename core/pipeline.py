@@ -146,6 +146,19 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
                 + "\n".join(f"- {f}" for f in facts),
             }
         )
+
+    # 逐渐学习对方说话风格（由每日/定期提炼，注入供自然模仿）
+    style = db.get_style(user_id)
+    if style:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    f"你逐渐观察到的对方的说话风格：{style}\n"
+                    "自然地模仿对方的说话习惯（短句/语气词/表情节奏），但别生硬、别学得过头，保持你自己的慵懒温柔。"
+                ),
+            }
+        )
     if search_hits:
         snippets = "\n".join(f"- {h['title']}：{h['snippet']}" for h in search_hits[:5])
         messages.append(

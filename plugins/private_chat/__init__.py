@@ -6,7 +6,7 @@ import asyncio
 import re
 
 from nonebot import on_command, on_message
-from nonebot.adapters.onebot.v11 import Message, PrivateMessageEvent
+from nonebot.adapters.onebot.v11 import Message, MessageSegment, PrivateMessageEvent
 
 from core import affection
 from core.config import config
@@ -69,6 +69,20 @@ def _split_reply(reply: str, max_len: int = 26) -> list[str]:
     return chunks or [reply]
 
 
+def _build_message(text: str) -> Message:
+    """把文本里的 [face:N] 标记转成 QQ 原生表情，构造混合消息。"""
+    msg = Message()
+    for part in re.split(r"(\[face:\d+\])", text):
+        if not part:
+            continue
+        m = re.fullmatch(r"\[face:(\d+)\]", part)
+        if m:
+            msg.append(MessageSegment.face(id_=int(m.group(1))))
+        else:
+            msg.append(MessageSegment.text(part))
+    return msg
+
+
 async def _send_reply(reply: str) -> None:
     """像网友发消息一样，把回复拆成多条短消息，带间隔依次发送。"""
     chunks = _split_reply(reply)
@@ -77,7 +91,7 @@ async def _send_reply(reply: str) -> None:
             # 间隔随消息稍长一点 + 基础间隔，更像真人一条条打
             delay = config.send_interval + 0.02 * len(c)
             await asyncio.sleep(delay)
-        await private_msg.send(Message(c))
+        await private_msg.send(_build_message(c))
 
 
 @set_address_cmd.handle()

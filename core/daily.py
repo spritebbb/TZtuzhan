@@ -22,14 +22,13 @@ JUDGE_PROMPT = """你是「菟菚」的好感度管理员。根据以下某用�
 {"hobby": 0, "respect": 0, "dismiss": 0, "address": ""}
 """
 
-FACT_PROMPT = """你是记忆提取员。根据下面的对话，提取值得长期记住的事实——关于用户这个人的：喜好、习惯、工作/生活情况、重要约定、关系进展、对菟菚的看法等。
-要求：
-- 每一条用一句简短、客观的话，以「用户」开头；
-- 忽略寒暄、天气闲聊（除非表达了明确喜好）、无关内容；
-- 最多 5 条，宁缺毋滥。
-只输出 JSON 数组，不要其他任何内容：
-["用户喜欢下雨天", "用户和菟菚约好每周五晚上视频"]
-没有值得记的就输出 []。
+FACT_PROMPT = """你是记忆提取员。根据下面的对话，提取两样东西，只输出一个 JSON：
+1) facts：值得长期记住的关于用户的事实（喜好、习惯、工作/生活、约定、关系进展等），每条一句短话，以「用户」开头，最多 5 条。
+2) style：对「用户说话风格」的简要描述（1-2 句），包括：句子长短、是否爱用语气词/表情、常用口头禅、语气是直接还是委婉、爱不爱开玩笑等。
+
+输出格式（不要任何其他内容）：
+{"facts": ["用户喜欢下雨天", "用户和菟菚约好每周五晚上视频"], "style": "对方说话简短直接，常用'啊'和'哈'，喜欢发短句和表情。"}
+没有值得记的事实就输出 {"facts": [], "style": "..."}
 """
 
 
@@ -100,14 +99,22 @@ async def extract_facts(user_id: str, day: date | None = None) -> None:
                 {"role": "user", "content": f"对话记录：\n{transcript}"},
             ],
             temperature=0.3,
-            max_tokens=300,
+            max_tokens=400,
         )
-        facts = _parse_json(resp)
+        data = _parse_json(resp)
     except Exception:
         db.set_last_fact_msg_id(user_id, done)  # 失败也推进游标，避免反复重试同一批
         return
 
+    if isinstance(data, dict):
+        facts = data.get("facts") or []
+        style = (data.get("style") or "").strip()
+    else:
+        facts = data if isinstance(data, list) else []
+        style = ""
     if isinstance(facts, list):
         for f in facts:
             db.add_fact(user_id, str(f).strip()[:100])
+    if style:
+        db.set_style(user_id, style[:200])  # 逐渐学习对方说话风格
     db.set_last_fact_msg_id(user_id, done)

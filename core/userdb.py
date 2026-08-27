@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS users (
     lover_confirm   INTEGER NOT NULL DEFAULT 0,
     first_chat_done INTEGER NOT NULL DEFAULT 0,
     last_chat_date  TEXT,
-    last_batch_date TEXT
+    last_batch_date TEXT,
+    style_profile   TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,6 +67,11 @@ class UserDB:
         self.conn = sqlite3.connect(config.data_dir / "bot.db")
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_SCHEMA)
+        # 兼容旧库：补上 style_profile 列
+        try:
+            self.conn.execute("ALTER TABLE users ADD COLUMN style_profile TEXT")
+        except sqlite3.OperationalError:
+            pass
         self.conn.commit()
 
     # ---- users ----
@@ -98,6 +104,19 @@ class UserDB:
             "UPDATE users SET nickname_pref = ? WHERE user_id = ?", (name, user_id)
         )
         self.conn.commit()
+
+    def set_style(self, user_id: str, style: str) -> None:
+        """记录 LLM 提炼的对方说话风格（随聊天逐渐更新）。"""
+        self.conn.execute(
+            "UPDATE users SET style_profile = ? WHERE user_id = ?", (style, user_id)
+        )
+        self.conn.commit()
+
+    def get_style(self, user_id: str) -> str:
+        row = self.conn.execute(
+            "SELECT style_profile FROM users WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return (row["style_profile"] or "") if row else ""
 
     def set_affection_absolute(self, user_id: str, value: int) -> None:
         """直接把好感度设为指定值（0-100），用于手动调节/调试。"""

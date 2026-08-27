@@ -228,6 +228,31 @@ class UserDB:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [{"content": c} for _, c in scored[:top_k]]
 
+    def search_long_memory_multi(self, user_id: str, queries: list[str], top_k: int):
+        """多查询词合并检索：每个查询独立打分后按最高分汇总，取 top_k。
+
+        语义检索的落地方式：LLM 把用户问题扩展成若干关键词/短语，逐一检索，
+        比单条原文命中更稳（原句里的口语词常常和存档时的措辞对不上）。
+        """
+        scored: dict[int, tuple[int, str]] = {}
+        for query in queries:
+            q_bigrams = _bigrams(query)
+            if not q_bigrams:
+                continue
+            min_overlap = min(2, len(q_bigrams))
+            rows = self.conn.execute(
+                "SELECT id, content, ts FROM long_memory WHERE user_id = ? "
+                "ORDER BY id DESC LIMIT 500",
+                (user_id,),
+            ).fetchall()
+            for r in rows:
+                content_bigrams = _bigrams(r["content"])
+                overlap = len(q_bigrams & content_bigrams)
+                if overlap >= min_overlap and overlap > scored.get(r["id"], (0, ""))[0]:
+                    scored[r["id"]] = (overlap, r["content"])
+        ranked = sorted(scored.values(), key=lambda x: x[0], reverse=True)
+        return [{"content": c} for _, c in ranked[:top_k]]
+
     # ---- facts（LLM 提炼的长期事实）----
     def add_fact(self, user_id: str, content: str) -> bool:
         """存一条事实；与已有事实二元组重叠≥50% 视为重复则跳过。"""

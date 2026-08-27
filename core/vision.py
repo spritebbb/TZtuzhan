@@ -10,6 +10,7 @@ import urllib.request
 from openai import AsyncOpenAI
 
 from .config import config
+from .log import logger
 
 _vision_client: AsyncOpenAI | None = None
 
@@ -67,4 +68,5 @@ async def describe_image(url: str) -> str:
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception:
+        logger.warning("[识图] 图片描述失败（返回空，按表情包处理）：{}", url)
         return ""

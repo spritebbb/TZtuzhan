@@ -40,5 +40,9 @@ class Config:
         # 唯一允许被主动发消息的 QQ 号（设了后只对该号发；留空则对最后说话的人发）
         self.proactive_user_id: str = os.getenv("PROACTIVE_USER_ID", "").strip()
 
+        # 记忆语义检索：用户疑似回忆（上次/之前/还记得…）时，先用 LLM 把问题
+        # 扩展成多个检索词再查长期记忆，提升召回；关闭则退回 v1 关键词检索
+        self.memory_semantic: bool = os.getenv("MEMORY_SEMANTIC", "1") != "0"
+
 
 config = Config()

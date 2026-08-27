@@ -9,6 +9,7 @@ from datetime import date
 
 from . import affection
 from .llm import chat
+from .log import logger
 from .pipeline import clean_address
 from .userdb import db
 
@@ -55,7 +56,7 @@ async def run_daily_batch(user_id: str, day: date) -> None:
         )
         data = _parse_json(resp)
     except Exception:
-        pass
+        logger.exception("[每日总结] {} 的好感度判定失败", user_id)
 
     if data.get("hobby"):
         db.update_affection(user_id, affection.HOBBY_BONUS, "用户聊自己的爱好")
@@ -103,6 +104,7 @@ async def extract_facts(user_id: str, day: date | None = None) -> None:
         )
         data = _parse_json(resp)
     except Exception:
+        logger.exception("[事实提炼] {} 的事实提炼失败（游标已推进，避免反复重试）", user_id)
         db.set_last_fact_msg_id(user_id, done)  # 失败也推进游标，避免反复重试同一批
         return
 

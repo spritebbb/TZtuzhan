@@ -2,6 +2,8 @@
 from collections import deque
 from datetime import date, datetime, timedelta
 
+from .log import logger
+from .tasks import schedule
 from .userdb import db
 
 # ---- 分值常量（对应 bot-design.md 规则）----
@@ -100,13 +102,10 @@ async def on_message(user_id: str, text: str) -> None:
         if last_day:
             yesterday = today - timedelta(days=1)
             if user["last_batch_date"] != yesterday.isoformat():
-                # 惰性执行昨日 LLM 每日总结（聊爱好/尊重/轻视 + 事实提炼）
+                # 后台执行昨日 LLM 每日总结（不阻塞本轮回复）
                 from .daily import run_daily_batch  # 延迟导入避免循环
 
-                try:
-                    await run_daily_batch(user_id, yesterday)
-                except Exception:
-                    pass  # 总结失败不阻塞对话
+                schedule(f"daily:{user_id}:{yesterday}", lambda: run_daily_batch(user_id, yesterday))
                 db.set_chat_date(user_id, today.isoformat(), yesterday.isoformat())
             else:
                 db.set_chat_date(user_id, today.isoformat())

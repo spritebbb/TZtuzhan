@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 from . import affection
 from .llm import chat, extract_address
+from .log import logger
 from .memory import recall, recall_facts, short_term_messages
 from .persona import build_system_prompt
 from .search import web_search
@@ -80,17 +81,19 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     # 1) 好感度即时规则（含跨天回滚）
     await affection.on_message(user_id, text)
 
-    # 1.5) 惰性事实提炼（按消息批量 + 会话长时间没说话后补提尾部）
+    # 1.5) 惰性事实提炼（按消息批量 + 会话长时间没说话后补提尾部）→ 后台执行，
+    # 不阻塞本轮回复；失败只记日志（见 tasks.schedule 的 _runner）
     try:
         from .daily import extract_facts  # 延迟导入避免循环
+        from .tasks import schedule
 
         unseen = db.max_message_id(user_id) - db.get_last_fact_msg_id(user_id)
         if unseen >= 10:
-            await extract_facts(user_id)
+            schedule(f"facts:{user_id}", lambda: extract_facts(user_id))
         elif unseen >= _IDLE_MIN_NEW and _long_gap(db.last_message_ts(user_id)):
-            await extract_facts(user_id)
+            schedule(f"facts:{user_id}", lambda: extract_facts(user_id))
     except Exception:
-        pass
+        logger.exception("[pipeline] 惰性事实提炼调度失败")
 
     # 2) 称呼与过分称呼处理（无论是否已设称呼，过分称呼都要检测并扣分）
     pref = user["nickname_pref"]
@@ -118,9 +121,13 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
             db.set_nickname(user_id, candidate)
             pref = candidate
 
-    # 3) 记忆与上下文
-    remembered = recall(user_id, text)
-    facts = recall_facts(user_id, text)
+    # 3) 记忆与上下文（语义检索在疑似回忆时才扩展，内部已做失败退化）
+    try:
+        remembered = await recall(user_id, text, mock=mock)
+        facts = await recall_facts(user_id, text, mock=mock)
+    except Exception:
+        logger.exception("[pipeline] 记忆检索失败，按无记忆继续")
+        remembered, facts = [], []
     ctx = short_term_messages(user_id)
 
     # 3.5) 联网搜索（命中需要搜索的关键词时）

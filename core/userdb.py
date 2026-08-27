@@ -261,6 +261,12 @@ class UserDB:
         ).fetchone()
         return row["m"] or 0
 
+    def last_message_ts(self, user_id: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT ts FROM messages WHERE user_id = ? ORDER BY id DESC LIMIT 1", (user_id,)
+        ).fetchone()
+        return row["ts"] if row else None
+
     def reset(self) -> None:
         """清空所有数据（用于重复测试）。
 

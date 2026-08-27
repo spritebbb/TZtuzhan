@@ -4,12 +4,28 @@
 保证各处行为一致。
 """
 import re
+from datetime import datetime, timedelta
 
 from . import affection
 from .llm import chat, extract_address
 from .memory import recall, recall_facts, short_term_messages
 from .persona import build_system_prompt
 from .userdb import db
+
+# 会话空闲判定：离上一条消息超过该分钟数，视为上一场聊完，补提尾部事实
+_IDLE_SESSION_MINUTES = 30
+_IDLE_MIN_NEW = 4
+
+
+def _long_gap(ts: str | None) -> bool:
+    """判断某时间戳是否距现在超过空闲阈值。"""
+    if not ts:
+        return False
+    try:
+        t = datetime.fromisoformat(ts)
+    except ValueError:
+        return False
+    return (datetime.now() - t).total_seconds() >= _IDLE_SESSION_MINUTES * 60
 
 # 称呼意图检测：判断「这句是否在设置称呼」（正则无法精确取名，只做判断 + mock 兜底）
 ADDRESS_RE = re.compile(
@@ -41,11 +57,14 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     # 1) 好感度即时规则（含跨天回滚）
     await affection.on_message(user_id, text)
 
-    # 1.5) 惰性事实提炼（每约 10 条消息一次，让记忆当天就能用）
+    # 1.5) 惰性事实提炼（按消息批量 + 会话长时间没说话后补提尾部）
     try:
-        if db.max_message_id(user_id) - db.get_last_fact_msg_id(user_id) >= 10:
-            from .daily import extract_facts  # 延迟导入避免循环
+        from .daily import extract_facts  # 延迟导入避免循环
 
+        unseen = db.max_message_id(user_id) - db.get_last_fact_msg_id(user_id)
+        if unseen >= 10:
+            await extract_facts(user_id)
+        elif unseen >= _IDLE_MIN_NEW and _long_gap(db.last_message_ts(user_id)):
             await extract_facts(user_id)
     except Exception:
         pass

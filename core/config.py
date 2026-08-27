@@ -31,7 +31,7 @@ class Config:
         self.vision_model: str = os.getenv("VISION_MODEL", "").strip()
 
         # 网友式多条消息之间的发送间隔（秒）
-        self.send_interval: float = float(os.getenv("SEND_INTERVAL", "2.0"))
+        self.send_interval: float = float(os.getenv("SEND_INTERVAL", "3.0"))
 
 
 config = Config()

@@ -53,7 +53,7 @@ async def handle_private(event: PrivateMessageEvent):
 
 
 def _split_reply(reply: str, max_len: int = 26) -> list[str]:
-    """把回复拆成适合逐条发送的短消息：按换行拆，超长句子再按标点拆。"""
+    """把回复拆成适合逐条发送的短消息：按换行拆，超长句子再按标点拆；最多 3 条。"""
     chunks: list[str] = []
     for part in re.split(r"\n+", reply):
         part = part.strip()
@@ -66,7 +66,11 @@ def _split_reply(reply: str, max_len: int = 26) -> list[str]:
                 sub = sub.strip()
                 if sub:
                     chunks.append(sub)
-    return chunks or [reply]
+    if not chunks:
+        chunks = [reply]
+    if len(chunks) > 3:
+        chunks = chunks[:2] + ["".join(chunks[2:])]  # 超出的并进最后一条
+    return chunks
 
 
 def _build_message(text: str) -> Message:

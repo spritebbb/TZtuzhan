@@ -51,5 +51,5 @@ def run_daily_batch(user_id: str, day: date) -> None:
         db.update_affection(user_id, affection.DISMISS_PENALTY, "轻视/不重视")
 
     addr = (data.get("address") or "").strip()
-    if addr and not db.get_user(user_id)["nickname_pref"]:
+    if addr and not db.get_user(user_id)["nickname_pref"] and not affection.check_bad_address(addr):
         db.set_nickname(user_id, addr[:12])

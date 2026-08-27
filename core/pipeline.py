@@ -23,13 +23,19 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
     # 1) 好感度即时规则（含跨天回滚）
     affection.on_message(user_id, text)
 
-    # 2) 称呼提取（仅尚无偏好时）
+    # 2) 称呼提取（仅尚无偏好时）；不合适的称呼 → 拒绝 + 扣好感度
     pref = user["nickname_pref"]
+    bad_address = None
     if not pref:
         m = ADDRESS_RE.search(text)
         if m:
-            db.set_nickname(user_id, m.group(1))
-            pref = m.group(1)
+            candidate = m.group(1)
+            if affection.check_bad_address(candidate):
+                db.update_affection(user_id, affection.BAD_ADDRESS_PENALTY, "要求不合适的称呼")
+                bad_address = candidate
+            else:
+                db.set_nickname(user_id, candidate)
+                pref = candidate
 
     # 3) 记忆与上下文
     remembered = recall(user_id, text)
@@ -53,6 +59,19 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
         )
     messages.extend(ctx)
     messages.append({"role": "user", "content": text})
+
+    # 拒绝不合适的称呼：给模型注入强硬拒绝指令
+    if bad_address:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    f"用户刚才想让你用「{bad_address}」这种称呼，这让你很不舒服。"
+                    "请强硬拒绝这个称呼，明确说不行，语气冷淡带刺一点，"
+                    "并让他换个正常的称呼；不要彻底不理他。"
+                ),
+            }
+        )
 
     # 5) 调用 LLM
     reply = await chat(messages, mock=mock)

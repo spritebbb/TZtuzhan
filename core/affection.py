@@ -12,6 +12,7 @@ RESPECT_BONUS = 1       # 尊重菟菚的喜好（每日总结判定）
 DISMISS_PENALTY = -3    # 轻视、不重视（每日总结判定）
 SPAM_PENALTY = -2       # 刷屏
 ABUSE_PENALTY = -5      # 辱骂
+BAD_ADDRESS_PENALTY = -5  # 要求不合适的称呼
 
 STAGE_THRESHOLDS = ((0, "初识"), (25, "熟悉"), (50, "亲密"), (75, "恋人"))
 
@@ -19,6 +20,14 @@ STAGE_THRESHOLDS = ((0, "初识"), (25, "熟悉"), (50, "亲密"), (75, "恋人"
 ABUSE_WORDS = [
     "傻逼", "煞笔", "沙比", "废物", "垃圾", "去死", "贱人", "畜生",
     "脑残", "智障", "滚蛋", "恶心", "爬", "sb", "SB", "cnm", "草泥马", "妈的",
+]
+
+# 不合适的称呼（要求菟菚这样称呼会拒绝并扣好感度，可扩充）
+BAD_ADDRESS_WORDS = [
+    # 辱骂/侮辱类
+    "傻逼", "煞笔", "沙比", "骚狗", "母狗", "贱狗", "臭狗", "狗逼", "贱人", "废物", "垃圾",
+    # 亲属辈分类（失当）
+    "爸爸", "爹", "爹爹", "爷爷", "奶奶", "祖宗",
 ]
 
 _SPAM_WINDOW_SECONDS = 10
@@ -39,6 +48,11 @@ def stage_of(affection: int) -> str:
 def check_abuse(text: str) -> bool:
     lowered = text.lower()
     return any(w in lowered for w in ABUSE_WORDS)
+
+
+def check_bad_address(name: str) -> bool:
+    """判断是否为不合适的称呼（侮辱类 / 失当亲属称谓）。"""
+    return any(w in name for w in BAD_ADDRESS_WORDS)
 
 
 def _spam_hit(user_id: str) -> bool:

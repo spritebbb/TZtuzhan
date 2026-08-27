@@ -18,6 +18,8 @@ search_cmd = on_command("搜索", aliases={"搜"}, priority=4, block=True)
 
 @private_msg.handle()
 async def handle_private(event: PrivateMessageEvent):
+    if not isinstance(event, PrivateMessageEvent):
+        return  # 只处理私聊，不接入群聊
     text = event.get_plaintext().strip()
     if not text:
         await private_msg.finish(Message("……"))
@@ -30,6 +32,8 @@ async def handle_private(event: PrivateMessageEvent):
 
 @set_address_cmd.handle()
 async def handle_set_address(event: PrivateMessageEvent):
+    if not isinstance(event, PrivateMessageEvent):
+        return
     text = event.get_plaintext().strip()
     if not text:
         await set_address_cmd.finish(Message("用法：/称呼 哥哥"))
@@ -43,6 +47,8 @@ async def handle_set_address(event: PrivateMessageEvent):
 
 @aff_cmd.handle()
 async def handle_aff(event: PrivateMessageEvent):
+    if not isinstance(event, PrivateMessageEvent):
+        return
     text = event.get_plaintext().strip()
     uid = str(event.user_id)
     if not text or text in ("查看", "看", "查询", "当前"):
@@ -56,6 +62,8 @@ async def handle_aff(event: PrivateMessageEvent):
 
 @search_cmd.handle()
 async def handle_search(event: PrivateMessageEvent):
+    if not isinstance(event, PrivateMessageEvent):
+        return
     text = event.get_plaintext().strip()
     if not text:
         await search_cmd.finish(Message("用法：/搜索 <关键词>"))

@@ -4,3 +4,7 @@ data/
 __pycache__/
 *.pyc
 .tmp/
+
+# NapCat (QQ 客户端，不要进仓库)
+napcat/
+Napcat/

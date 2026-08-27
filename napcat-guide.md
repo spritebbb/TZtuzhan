@@ -3,6 +3,42 @@
 NapCat 是 QQNT 的协议实现，负责让 bot 能收发 QQ 私聊消息。
 它与 bot 之间走 **OneBot 11 正向 WebSocket** 标准。
 
+## ✅ 本机已配置完成（实测可用）
+
+- NapCat：`D:\DSH\TZtuzhan\Napcat\NapCat.Shell.Windows.Node\`（v4.18.19）
+- 启动脚本：**`napcat\launcher-my.bat`**（自定义，直接指向 `D:\QQ\QQ.exe`，绕过注册表）
+- QQNT：`D:\QQ\QQ.exe`（版本 9.9.33）
+- bot QQ 号：**<BOT_QQ>**
+- OneBot 正向 WS：**端口 3001**（已写入 `napcat\config\onebot11_<BOT_QQ>.json`）
+- WebUI：`http://127.0.0.1:6099`（token 见 `config\webui.json`）
+- 配置文件（NapCat）已加入 `.gitignore`，不会进仓库
+
+### 日常启动（两个终端）
+
+**终端 ① —— NapCat：**
+```powershell
+cd D:\DSH\TZtuzhan\Napcat\NapCat.Shell.Windows.Node\napcat
+launcher-my.bat
+```
+（登录过的小号会话一般会自动登录；若弹码就扫码。）
+
+**终端 ② —— bot：**
+```powershell
+cd D:\DSH\TZtuzhan
+.\.venv\Scripts\python.exe bot.py
+```
+日志出现 `OneBot V11 | Bot <BOT_QQ> connected` 即连接成功。
+
+### 验证
+```powershell
+Get-NetTCPConnection -LocalPort 3001 -State Listen   # NapCat 就绪
+```
+用另一个 QQ 私聊 bot 号，发"你好"、`/好感 80`、`/搜索 xxx` 测试。
+
+---
+
+> 以下为通用安装说明（首次安装参考）。
+
 ## 一、下载与安装
 
 1. 打开 NapCat 官方仓库：<https://github.com/NapNeko/NapCatQQ/releases>

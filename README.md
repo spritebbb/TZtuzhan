@@ -24,7 +24,7 @@ TZtuzhan/
 └── plugins/private_chat/   # QQ 私聊主插件
 ```
 
-人格源文件：`D:\DSH\persona-菟菚.md`（唯一人格来源，改它即可改人设）。
+人格源文件：`persona-菟菚.md`（项目内，已纳入 git 管理，唯一人格来源，改它即可改人设）。
 设计文档：`D:\DSH\bot-design.md`。
 
 ## 快速开始

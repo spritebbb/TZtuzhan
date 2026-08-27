@@ -16,7 +16,7 @@ class Config:
         self.llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.8"))
         self.llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "500"))
 
-        persona = os.getenv("PERSONA_FILE", "../persona-菟菚.md")
+        persona = os.getenv("PERSONA_FILE", "persona-菟菚.md")
         p = Path(persona)
         self.persona_file: Path = p if p.is_absolute() else (PROJECT_ROOT / p)
 

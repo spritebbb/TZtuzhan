@@ -2,7 +2,7 @@
 
 固定单人格 · QQ 私聊 · 完整记忆（短期 + 长期）· 好感度系统
 
-「菟菚」是一株喜欢人类的菟丝子——温柔、慵懒、带一点病娇。她只用于 QQ **私聊**，不接入群聊。
+「菟菚」是一个菟丝子娘——温柔、慵懒、带一点病娇，爱晒太阳、爱黏人。她只用于 QQ **私聊**，不接入群聊。
 
 ## 项目结构
 
@@ -59,8 +59,8 @@ Copy-Item .env.example .env
 
 ```powershell
 .\.venv\Scripts\python.exe debug_cli.py --mock     # 模拟回复，跑通全流程
-.\.venv\Scripts\python.exe debug_cli.py            # 使用真实 LLM
-.\.venv\Scripts\python.exe debug_cli.py --reset    # 清除本地数据（记忆/好感度/称呼）后重新开始
+.\.venv\Scripts\python.exe debug_cli.py            # 使用真实 LLM（如有上次数据会询问是否清除）
+.\.venv\Scripts\python.exe debug_cli.py --reset    # 强制清除本地数据（记忆/好感度/称呼），跳过询问
 ```
 
 ### 3. 部署 NapCat 并运行

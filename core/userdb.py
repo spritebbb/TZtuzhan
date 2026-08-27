@@ -7,6 +7,7 @@
 - affection_log 好感度变动流水
 """
 import sqlite3
+import time
 from datetime import date, datetime
 
 from .config import config
@@ -161,14 +162,33 @@ class UserDB:
         return [{"content": c} for _, c in scored[:top_k]]
 
     def reset(self) -> None:
-        """清空所有数据：删除数据库文件并重建（用于重复测试）。"""
+        """清空所有数据（用于重复测试）。
+
+        优先删除数据库文件重建；若文件被其他进程占用（WinError 32），
+        自动退化为用 SQL 清空全部表，保证功能可用。
+        """
+        self.conn.execute("PRAGMA busy_timeout = 5000")
+        self.conn.commit()
         self.conn.close()
+
         path = config.data_dir / "bot.db"
-        if path.exists():
-            path.unlink()
+        deleted = False
+        for _ in range(3):
+            try:
+                path.unlink()
+                deleted = True
+                break
+            except PermissionError:
+                time.sleep(0.3)
+
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
-        self.conn.executescript(_SCHEMA)
+        if deleted:
+            self.conn.executescript(_SCHEMA)
+        else:
+            self.conn.execute("PRAGMA busy_timeout = 5000")
+            for table in ("affection_log", "long_memory", "messages", "users"):
+                self.conn.execute(f"DELETE FROM {table}")
         self.conn.commit()
 
 

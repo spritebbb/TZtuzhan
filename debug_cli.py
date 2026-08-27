@@ -45,12 +45,28 @@ async def main(mock: bool) -> None:
               f" · 称呼 {u['nickname_pref'] or '未设定'}]")
 
 
+def _ask_reset() -> None:
+    """启动时询问是否清除上次数据（仅当存在历史数据时；默认不清除）。"""
+    try:
+        count = db.conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    except Exception:
+        count = 0
+    if count == 0:
+        return
+    answer = input("检测到上次的本地数据，是否清除后重新开始？[y/N] ").strip().lower()
+    if answer in ("y", "yes"):
+        db.reset()
+        print("已清除本地数据（记忆/好感度/称呼）")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mock", action="store_true", help="使用模拟回复（无需 API key）")
-    parser.add_argument("--reset", action="store_true", help="清除本地数据（记忆/好感度/称呼）后重新开始")
+    parser.add_argument("--reset", action="store_true", help="强制清除本地数据后重新开始（跳过询问）")
     args = parser.parse_args()
     if args.reset:
         db.reset()
         print("已清除本地数据（记忆/好感度/称呼）")
+    else:
+        _ask_reset()
     asyncio.run(main(args.mock))

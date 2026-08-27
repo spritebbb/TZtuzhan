@@ -6,8 +6,8 @@ NapCat 是 QQNT 的协议实现，负责让 bot 能收发 QQ 私聊消息。
 ## ✅ 本机已配置完成（实测可用）
 
 - NapCat：`D:\DSH\TZtuzhan\Napcat\NapCat.Shell.Windows.Node\`（v4.18.19）
-- 启动脚本：**`napcat\launcher-my.bat`**（自定义，直接指向 `D:\QQ\QQ.exe`，绕过注册表）
-- QQNT：`D:\QQ\QQ.exe`（版本 9.9.33）
+- 启动脚本：**`napcat\launcher.bat`**（官方，带管理员提权；通过注册表找到 `D:\QQ\QQ.exe`）
+- QQNT：`D:\QQ\QQ.exe`（版本 9.9.33，已注册到注册表，launcher 能自动找到）
 - bot QQ 号：**<BOT_QQ>**
 - OneBot 正向 WS：**端口 3001**（已写入 `napcat\config\onebot11_<BOT_QQ>.json`）
 - WebUI：`http://127.0.0.1:6099`（token 见 `config\webui.json`）
@@ -15,12 +15,12 @@ NapCat 是 QQNT 的协议实现，负责让 bot 能收发 QQ 私聊消息。
 
 ### 日常启动（两个终端）
 
-**终端 ① —— NapCat：**
+**终端 ① —— NapCat（用官方 launcher.bat，会弹管理员/UAC 确认）：**
 ```powershell
 cd D:\DSH\TZtuzhan\Napcat\NapCat.Shell.Windows.Node\napcat
-launcher-my.bat
+launcher.bat
 ```
-（登录过的小号会话一般会自动登录；若弹码就扫码。）
+（它需要管理员权限注入 QQNT；登录过的小号一般会自动登录，若弹码就扫码。）
 
 **终端 ② —— bot：**
 ```powershell

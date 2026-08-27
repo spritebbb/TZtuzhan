@@ -70,6 +70,8 @@ def _split_reply(reply: str, max_len: int = 26) -> list[str]:
         chunks = [reply]
     if len(chunks) > 3:
         chunks = chunks[:2] + ["".join(chunks[2:])]  # 超出的并进最后一条
+    # 网友聊天不用句号：去掉每条消息结尾的句号
+    chunks = [c.rstrip("。").strip() or c for c in chunks]
     return chunks
 
 

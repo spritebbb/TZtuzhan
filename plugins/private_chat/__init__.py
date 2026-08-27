@@ -7,7 +7,7 @@ from nonebot.adapters.onebot.v11 import Message, PrivateMessageEvent
 
 from core import affection
 from core.pipeline import clean_address, process
-from core.search import web_search, web_search_last_error
+from core.search import last_error as search_last_error, web_search
 from core.userdb import db
 
 private_msg = on_message(priority=5, block=True)
@@ -61,6 +61,6 @@ async def handle_search(event: PrivateMessageEvent):
         await search_cmd.finish(Message("用法：/搜索 <关键词>"))
     results = web_search(text)
     if not results:
-        await search_cmd.finish(Message(f"没查到什么……（{web_search_last_error or '未知原因'}）"))
+        await search_cmd.finish(Message(f"没查到什么……（{search_last_error() or '未知原因'}）"))
     lines = [f"{r['title']}：{r['snippet'][:80]}" for r in results[:5]]
     await search_cmd.finish(Message("\n".join(lines)))

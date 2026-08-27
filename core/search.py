@@ -12,6 +12,11 @@ from .config import config
 web_search_last_error = ""
 
 
+def last_error() -> str:
+    """最近一次搜索失败的原因（供界面显示）。"""
+    return web_search_last_error
+
+
 def web_search(query: str, max_results: int = 5) -> list[dict]:
     """搜索并返回 [{title, snippet, url}]。失败时返回 [] 并在 last_error 记录原因。"""
     global web_search_last_error

@@ -12,7 +12,7 @@ import sys
 
 from core import affection
 from core.pipeline import process
-from core.search import web_search
+from core.search import web_search, web_search_last_error
 from core.userdb import db
 
 # 控制台统一用 UTF-8 输出，避免 GBK 编码器无法打印颜文字（´･ω･` 等）
@@ -79,7 +79,7 @@ def _handle_search_cmd(raw: str) -> None:
     print(f"正在搜索「{query}」...")
     results = web_search(query)
     if not results:
-        print("（未找到结果，或搜索引擎不可用）")
+        print(f"（未找到结果：{web_search_last_error or '未知原因'}）")
         return
     for r in results[:5]:
         print(f"- {r['title']} | {r['snippet'][:60]} | {r['url']}")

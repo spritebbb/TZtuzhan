@@ -210,6 +210,16 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
 
     # 过早表白/求婚（初识/熟悉阶段）：当成变态，温柔拒绝 + 扣好感度
     stage = affection.stage_of(user["affection"])
+    if stage == "初识":
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "你们现在是刚认识的阶段，态度要冷淡疏远：回复尽量简短客气、保持距离、"
+                    "不主动热络、不撩、不说甜话；可以少一些热情的接话和反问，对方再热情也别被带偏。"
+                ),
+            }
+        )
     if stage in ("初识", "熟悉") and affection.check_early_confession(text):
         db.update_affection(user_id, affection.EARLY_CONFESSION_PENALTY, "过早表白/求婚")
         messages.append(

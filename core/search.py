@@ -3,6 +3,7 @@
 默认用 Bing（中国大陆可访问、无需 API key）；也可用 DuckDuckGo（SEARCH_ENGINE=ddg）。
 失败或关闭时返回空列表，并通过 web_search.last_error 给出原因，便于排查。
 """
+import json
 import re
 import urllib.parse
 import urllib.request
@@ -28,17 +29,63 @@ def web_search(query: str, max_results: int = 5) -> list[dict]:
 
     engine = getattr(config, "search_engine", "bing")
     order = ["bing", "ddg"] if engine != "ddg" else ["ddg", "bing"]
+    if getattr(config, "search_api_key", ""):
+        order.insert(0, "bocha")
+
     errors = []
     for eng in order:
-        results, err = (
-            _bing_search(query, max_results) if eng == "bing" else _ddg_search(query, max_results)
-        )
+        if eng == "bocha":
+            results, err = _bocha_search(query, max_results)
+        elif eng == "bing":
+            results, err = _bing_search(query, max_results)
+        else:
+            results, err = _ddg_search(query, max_results)
         if results:
             return results
         if err:
             errors.append(f"{eng}: {err}")
     web_search_last_error = "；".join(errors)
     return []
+
+
+def _bocha_search(query: str, max_results: int):
+    """通过博查 AI 搜索（国内，需 API key，返回结构化结果）。返回 (results, error)。"""
+    token = getattr(config, "search_api_key", "")
+    if not token:
+        return [], "未配置 SEARCH_API_KEY"
+    url = "https://api.bochaai.com/v1/web-search"
+    payload = json.dumps(
+        {"query": query, "summary": False, "count": max(1, min(10, max_results))}
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return [], f"网络错误: {e}"
+
+    if not isinstance(data, dict) or data.get("code") != 200:
+        return [], f"API 返回异常: {data.get('msg') or data.get('message') or data}"
+
+    pages = (data.get("data") or {}).get("webPages") or {}
+    value = pages.get("value") or []
+    results = []
+    for r in value:
+        results.append(
+            {
+                "title": r.get("name") or "",
+                "snippet": r.get("snippet") or "",
+                "url": r.get("url") or "",
+            }
+        )
+    return results, ("" if results else "无结果")
 
 
 def _bing_search(query: str, max_results: int, host: str = "www.bing.com"):

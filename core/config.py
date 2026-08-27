@@ -23,6 +23,7 @@ class Config:
         self.data_dir: Path = PROJECT_ROOT / "data"
         self.search_enabled: bool = os.getenv("SEARCH_ENABLED", "1") != "0"
         self.search_engine: str = os.getenv("SEARCH_ENGINE", "bing").lower()
+        self.search_api_key: str = os.getenv("SEARCH_API_KEY", "").strip()
 
 
 config = Config()

@@ -42,4 +42,12 @@ async def run() -> None:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--reset", action="store_true", help="清除本地数据后重新开始")
+    args = parser.parse_args()
+    if args.reset:
+        db.reset()
+        print("已清除本地数据")
     asyncio.run(run())

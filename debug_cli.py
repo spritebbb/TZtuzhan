@@ -48,5 +48,9 @@ async def main(mock: bool) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mock", action="store_true", help="使用模拟回复（无需 API key）")
+    parser.add_argument("--reset", action="store_true", help="清除本地数据（记忆/好感度/称呼）后重新开始")
     args = parser.parse_args()
+    if args.reset:
+        db.reset()
+        print("已清除本地数据（记忆/好感度/称呼）")
     asyncio.run(main(args.mock))

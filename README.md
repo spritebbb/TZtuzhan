@@ -60,6 +60,7 @@ Copy-Item .env.example .env
 ```powershell
 .\.venv\Scripts\python.exe debug_cli.py --mock     # 模拟回复，跑通全流程
 .\.venv\Scripts\python.exe debug_cli.py            # 使用真实 LLM
+.\.venv\Scripts\python.exe debug_cli.py --reset    # 清除本地数据（记忆/好感度/称呼）后重新开始
 ```
 
 ### 3. 部署 NapCat 并运行

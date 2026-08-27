@@ -160,6 +160,17 @@ class UserDB:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [{"content": c} for _, c in scored[:top_k]]
 
+    def reset(self) -> None:
+        """清空所有数据：删除数据库文件并重建（用于重复测试）。"""
+        self.conn.close()
+        path = config.data_dir / "bot.db"
+        if path.exists():
+            path.unlink()
+        self.conn = sqlite3.connect(path)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript(_SCHEMA)
+        self.conn.commit()
+
 
 def _bigrams(text: str) -> set[str]:
     text = text.strip()

@@ -58,10 +58,10 @@ async def proactive_message(user_id: str) -> str:
 
 
 async def _send_burst(bot, user_id: str, text: str) -> None:
-    """像网友一样把主动消息拆成几条短消息发送。"""
-    parts = [p.strip() for p in text.split("\n") if p.strip()]
+    """像网友一样把主动消息拆成几条短消息发送（也不带句号）。"""
+    parts = [p.strip().rstrip("。").strip() or p.strip() for p in text.split("\n") if p.strip()]
     if not parts:
-        parts = [text]
+        parts = [text.rstrip("。")]
     for i, p in enumerate(parts[:5]):
         if i > 0:
             await asyncio.sleep(config.send_interval)

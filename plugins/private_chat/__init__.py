@@ -235,9 +235,13 @@ async def _debounce_flush(user_id: str) -> None:
             except Exception:
                 logger.exception("[话术] 收到图片回应失败")
             # ② 收藏（回发时带一句自然话；但用视觉描述作话题，避免固定词）
+            just_collected: list[str] = []  # 本次刚收藏的文件路径，回发时排除（不能把对方刚发的原样奉还）
             for url in incoming_images:
-                await collect_sticker(user_id, url)
-            sticker = pick_sticker(user_id, "", 1)
+                rec = await collect_sticker(user_id, url)
+                if rec and rec.get("file"):
+                    just_collected.append(rec["file"])
+            # ③ 按语境挑一张「别的」收藏回发：优先同主题，其次随机，但都排除刚发的
+            sticker = pick_sticker(user_id, img_desc or "", 5, exclude_files=set(just_collected))
             if sticker:
                 try:
                     from core.speak import with_sticker

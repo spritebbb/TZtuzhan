@@ -67,14 +67,23 @@ async def collect(user_id: str, url: str) -> dict | None:
         return None
 
 
-def pick(user_id: str, keyword: str, limit: int = 30) -> list[dict]:
-    """按话题挑收藏的表情包；关键词为空则返回热门几张。"""
+def pick(user_id: str, keyword: str, limit: int = 30, exclude_files: set[str] | None = None) -> list[dict]:
+    """按话题挑收藏的表情包；关键词为空则返回热门几张。
+
+    exclude_files：要排除的本地文件路径集合——通常是**用户刚发的、刚被收藏的**那几张，
+    回发时不能把对方刚发的原样奉还，要从收藏里挑「别的、贴合语境」的。
+    """
+    exclude = set(exclude_files or ())
+
+    def _sift(rows: list[dict]) -> list[dict]:
+        return [r for r in rows if r.get("file") not in exclude]
+
     if keyword:
-        hits = get_sticker_by_desc(user_id, keyword, limit)
+        hits = _sift(get_sticker_by_desc(user_id, keyword, limit))
         if hits:
             return hits
-    # 话题没匹配到 → 返回收藏里出现次数最多的
-    return get_stickers(user_id, limit)
+    # 话题没匹配到 → 返回收藏里出现次数最多的（仍排除刚发的）
+    return _sift(get_stickers(user_id, limit))
 
 
 def get_recent_sticker(user_id: str) -> str | None:

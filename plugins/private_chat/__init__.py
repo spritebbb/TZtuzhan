@@ -14,6 +14,7 @@ from core import affection
 from core.config import config
 from core.imagegen import generate as generate_image
 from core.log import logger
+from core.message_build import _build_message, _maybe_append_emoji
 from core.pipeline import clean_address, process
 from core.proactive import send_proactive_now, set_active_user
 from core.search import last_error as search_last_error, web_search
@@ -266,36 +267,6 @@ def _split_reply(reply: str, max_len: int = 26) -> list[str]:
         chunks = chunks[:2] + ["".join(chunks[2:])]  # 超出的并进最后一条
     # 网友聊天不用句号：去掉每条消息结尾的句号
     chunks = [c.rstrip("。").strip() or c for c in chunks]
-    return chunks
-
-
-def _build_message(text: str) -> Message:
-    """把文本里的 [face:N] 标记转成 QQ 原生表情，构造混合消息。"""
-    msg = Message()
-    for part in re.split(r"(\[face:\d+\])", text):
-        if not part:
-            continue
-        m = re.fullmatch(r"\[face:(\d+)\]", part)
-        if m:
-            msg.append(MessageSegment.face(id_=int(m.group(1))))
-        else:
-            msg.append(MessageSegment.text(part))
-    return msg
-
-
-# 菟菚偶尔附带的表情（QQ face id；慵懒温柔/轻微病娇/黏人的调调）
-_EMOJI_POOL = [109, 111, 122, 176, 178, 179, 186, 214, 277, 311, 319, 324, 326]
-# 触发概率：每条回复里加表情的概率（调高更爱用表情）
-_EMOJI_PROB = 0.4
-
-
-def _maybe_append_emoji(chunks: list[str]) -> list[str]:
-    """给回复的某一条末尾随机加一个 QQ 表情；偶尔加（概率 _EMOJI_PROB）。"""
-    if not chunks or random.random() >= _EMOJI_PROB:
-        return chunks
-    idx = random.randrange(len(chunks))
-    fid = random.choice(_EMOJI_POOL)
-    chunks[idx] = f"{chunks[idx]}[face:{fid}]"
     return chunks
 
 

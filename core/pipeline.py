@@ -327,6 +327,19 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
     messages.extend(ctx)
     messages.append({"role": "user", "content": text})
 
+    # 不让 LLM 仿冒 QQ 表情标记：它常从历史消息里学 [face:N] 写出未定义的表情，
+    # 这些 NapCat 大多不支持会导致发送失败。明确的指令比事后过滤更干净。
+    messages.append(
+        {
+            "role": "system",
+            "content": (
+                "重要：不要输出任何 `[face:数字]` 这类 QQ 表情标记或方括号格式，"
+                "也不要使用[表情]表情包等方括号填充词。想表达情绪就自然说出口，"
+                "或用文字描述（如「我笑了」「噗」），只写正常的中文文字。"
+            ),
+        }
+    )
+
     # 对方连发多条合并成一段话 → 提示整体理解，只回一句精简的话
     if merged_msg:
         messages.append(

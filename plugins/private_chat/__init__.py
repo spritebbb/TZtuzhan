@@ -84,9 +84,7 @@ async def handle_draw(event: PrivateMessageEvent):
     except Exception:
         pre = ""
     await draw_cmd.send(Message(pre or "嗯……我画给你，稍等一下呀～"))
-    # 在 prompt 里强化菟菚的风格：温暖、治愈、在线感
-    enhanced = f"温暖治愈系插画风格，{prompt}，色调柔和，可爱，有生活气息"
-    path = await generate_image(enhanced)
+    path = await generate_image(prompt)
     if not path:
         from core.imagegen import last_error as img_last_error
 

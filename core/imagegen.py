@@ -135,11 +135,16 @@ def generate_sync(prompt: str, size: str = "1024x1024") -> str | None:
     if not prompt.strip():
         _last_error = ImageGenError("描述是空的，跟我说说想画什么呀？")
         return None
+    # 统一风格：日系二次元动漫风（默认），让对话生图和 /画 输出一致的二次元质感
+    styled = (
+        "日系二次元动漫风格，精致美型，画面干净通透，"
+        f"{prompt}，色彩明快，光影柔和，构图讲究"
+    )
     try:
         payload = json.dumps(
             {
                 "model": config.image_model,
-                "prompt": prompt,
+                "prompt": styled,
                 "image_size": size,
                 "batch_size": 1,
                 "num_inference_steps": 20,

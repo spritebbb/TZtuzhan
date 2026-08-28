@@ -212,13 +212,19 @@ def current_mood(user_id: str, *, city: str = "") -> tuple[int, str]:
     mood, updated = db.get_mood(user_id)
     baseline = _baseline_for(city, user_id) if city else 60
 
-    # 特殊日子当日加成：今日有特殊日子且上次心情更新不是今天 → 一次性加上
+    # 特殊日子/节日当日加成：今日有特殊日子或节日且上次心情更新不是今天 → 一次性加上
     if city:
         try:
-            from .schedule import _SPECIAL_MOOD_BONUS, _special_kind
+            from .schedule import _FESTIVAL_MOOD_BONUS, _SPECIAL_MOOD_BONUS, _special_kind
+            from .holidays import today_holidays
 
             special = _special_kind(user_id)
             bonus = _SPECIAL_MOOD_BONUS.get(special, 0) if special else 0
+            # 节日加成：取今天节日里心情加成最大的那个
+            for name in today_holidays():
+                v = _FESTIVAL_MOOD_BONUS.get(name, 0)
+                if v > bonus:
+                    bonus = v
             if bonus:
                 last_date = None
                 if updated:

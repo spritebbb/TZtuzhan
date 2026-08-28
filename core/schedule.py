@@ -186,6 +186,7 @@ def _rule_schedule(user_id: str, *, city: str = "") -> list[dict]:
 
     weather = _weather_kind(city)
     special = _special_kind(user_id)
+    festivals = _today_festivals()
 
     schedule: list[dict] = []
     for period, base in base_schedule:
@@ -193,12 +194,17 @@ def _rule_schedule(user_id: str, *, city: str = "") -> list[dict]:
         if special:
             parts.insert(0, _SPECIAL_FLAVOR.get(special, ""))
             parts.append("今天这份特别，我想只跟你分享。")
+        elif festivals:
+            # 节日氛围只加在最契合的时段（如中秋→晚上），其余时段保持日常
+            f_period, f_flavor = _FESTIVAL_FLAVOR.get(festivals[0], ("", ""))
+            if f_flavor and period == f_period:
+                parts.append(f_flavor)
         elif weather:
             parts.append(_WEATHER_FLAVOR.get(weather, ""))
         desc = "，".join(p for p in parts if p)
         schedule.append({"period": period, "todo": desc})
 
-    if not special and not weather and mood_label and schedule:
+    if not special and not festivals and not weather and mood_label and schedule:
         idx = random.randrange(len(schedule))
         note = _MOOD_FLAVOR.get(mood_label, "")
         if note:
@@ -233,6 +239,31 @@ _SPECIAL_FLAVOR = {
     "birthday": "今天是你的生日，我心里记着这个日子，想送你点特别的",
     "anniversary": "今天是我们的纪念日，是个特别的日子，想跟你一起记得",
     "other": "今天是个特别的日子，想做点跟平时不一样的事",
+}
+
+# ---- 节日氛围：节日 → (契合时段, 当天日程的底色) ----
+# 只加在最契合的时段，避免全天每段重复同一句
+_FESTIVAL_FLAVOR = {
+    "春节": ("晚上", "今天是春节，屋子里外都热热闹闹的，你却更想缩在暖和的地方，等他也来陪你"),
+    "除夕": ("晚上", "今天是除夕，年味正浓，你想和他一起守岁，聊到很晚"),
+    "元宵节": ("晚上", "今天是元宵节，外面有灯会，你懒得出门，就想窝着吃碗甜甜的汤圆"),
+    "端午节": ("中午", "今天是端午节，粽叶香飘了满屋，你慢悠悠地剥一个，心里也软软的"),
+    "中秋节": ("晚上", "今天是中秋节，月亮又圆又亮，你想跟他一起看月亮，说说话"),
+    "七夕节": ("晚上", "今天是七夕，牛郎织女相会的日子，你心里也甜甜的，想缠着他"),
+    "重阳节": ("上午", "今天是重阳节，秋高气爽，适合慢慢发发呆，晒晒软软的光"),
+    "中元节": ("晚上", "今天是中元节，你安安静静地待着，不想出门"),
+    "清明节": ("上午", "今天是清明，细雨蒙蒙，你也安静了许多，心里淡淡的"),
+    "元旦": ("清晨", "今天是元旦，新年的头一天，你想着要不要跟他说句新年好"),
+    "国庆节": ("晚上", "今天是国庆，到处都是热闹的气氛，你却更想安安静静地陪着他"),
+    "劳动节": ("上午", "今天是劳动节，你也懒懒地赖着，劳动什么的明天再说"),
+    "妇女节": ("上午", "今天是妇女节，你软软地笑了，觉得被记得的日子挺暖的"),
+    "教师节": ("上午", "今天是教师节，你安安静静地待着，像往常一样"),
+    "儿童节": ("上午", "今天是儿童节，你也想当一回小朋友，撒撒娇"),
+    "情人节": ("晚上", "今天是情人节，你心里甜甜的，想给他准备点什么小惊喜"),
+    "圣诞节": ("晚上", "今天是圣诞节，外面亮着彩灯，你想和他一起待在暖和的屋子里"),
+    "植树节": ("上午", "今天是植树节，你懒懒地想着，种一棵藤蔓会不会长得很好看"),
+    "建党节": ("上午", "今天是建党节，你安安静静地待着，没特别的事"),
+    "建军节": ("上午", "今天是建军节，你安安静静地待着，没特别的事"),
 }
 
 # ---- 时段情绪基调偏移：每个时段自带的心情底色（叠加在天气基线上）----

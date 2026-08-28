@@ -9,10 +9,14 @@ import re
 
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
 
-# 菟菚偶尔附带的表情（QQ face id；只放验证过 NapCat 支持的、慵懒温柔/轻微病娇/黏人的调调）
-_EMOJI_POOL = [109, 111, 122, 176, 178, 179, 186, 214, 277, 311, 319, 324, 326]
-# 触发概率：每条回复里加表情的概率（调高更爱用表情）
-_EMOJI_PROB = 0.4
+# 菟菚偶尔附带的表情（QQ face id）。
+# 重要：NapCat 对不同版本的原生 face id 支持范围不一致，任意一个不支持的 id 都会
+# 让整条消息报"消息体无法解析/不支持的ID"。为避免聊天被打断，默认**不使用**原生 face 表情，
+# 只靠 LLM 文本表达情绪。留空白名单 = 所有 [face:N] 一律按文本剥离，绝不让 NapCat 收到 face 段。
+# 若确认某个 id 你的 NapCat 支持，再把它加回这里。
+_EMOJI_POOL: list[int] = []
+# 触发概率：每条回复里加表情的概率（调高更爱用表情）。设为 0 表示不主动加原生 face。
+_EMOJI_PROB = 0.0
 
 
 def _build_message(text: str) -> Message:
@@ -45,3 +49,20 @@ def _maybe_append_emoji(chunks: list[str]) -> list[str]:
     fid = random.choice(_EMOJI_POOL)
     chunks[idx] = f"{chunks[idx]}[face:{fid}]"
     return chunks
+
+
+def image_file(file_path: str) -> str:
+    """把本地图片路径转成 NapCat 可靠的 file 参数。
+
+    用 file:/// + 正斜杠的 URI 形式，避免 Windows 反斜杠在 CQ 码里被误解析，
+    减少发送时 NapCat 报"消息体无法解析"。若路径已是 url/超链接则原样返回。
+    """
+    p = str(file_path)
+    if p.startswith(("http://", "https://", "file://", "base64://")):
+        return p
+    # Windows 绝对路径 → 正斜杠 + file:///
+    import pathlib
+
+    path = pathlib.Path(p).resolve()
+    uri = path.as_uri()  # 形如 file:///D:/DSH/TZtuzhan/data/stickers/xx.gif
+    return uri

@@ -1,32 +1,28 @@
-"""消息构建：_build_message 的 face 白名单校验测试（防 NapCat '不支持的ID' 报错）。"""
-import re
+"""消息构建：_build_message 的 face 过滤 + image_file 路径转换测试。
+
+背景：NapCat 对不支持的 face id 会报"消息体无法解析/不支持的ID"，
+因此默认白名单 _EMOJI_POOL 为空，所有 [face:N] 一律按文本剥离，绝不生成 face 段。
+"""
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.message_build import _build_message, _EMOJI_POOL, _maybe_append_emoji
+from core.message_build import _build_message, _EMOJI_POOL, _maybe_append_emoji, image_file
 
 
-def test_legal_face_convert():
-    """白名单内 [face:N] 转成 face 段。"""
-    msg = _build_message(f"好呀[face:{_EMOJI_POOL[0]}]")
-    segs = list(msg)
-    assert segs[-1].type == "face"
-    assert segs[-1].data["id"] == str(_EMOJI_POOL[0])
+def test_any_face_stripped_when_pool_empty():
+    """白名单为空（默认）时，任何 [face:N] 都不生成 face 段，只留文字。"""
+    for fid in (14, 44, 109, 277, 999):
+        msg = _build_message(f"求我也没用[face:{fid}]我真不会画")
+        segs = list(msg)
+        assert not any(s.type == "face" for s in segs)
+        joined = "".join(s.data.get("text", "") for s in segs)
+        assert "求我也没用" in joined and "我真不会画" in joined
+        assert f"[face:{fid}]" not in joined
 
 
-def test_illegal_face_stripped():
-    """LLM 乱填的 [face:44]（不在白名单）不生成 face 段，只留文字。"""
-    msg = _build_message("求我也没用[face:44]我真不会画")
-    segs = list(msg)
-    assert not any(s.type == "face" for s in segs)
-    joined = "".join(s.data.get("text", "") for s in segs)
-    assert "求我也没用" in joined and "我真不会画" in joined
-    assert "[face:44]" not in joined
-
-
-def test_no_face_segment_for_unknown():
+def test_normal_text_kept():
     """不带方括号的普通文字全部保留为文本。"""
     msg = _build_message("襄阳挺远的，十五个小时够你睡一觉")
     segs = list(msg)
@@ -34,9 +30,23 @@ def test_no_face_segment_for_unknown():
     assert "".join(s.data.get("text", "") for s in segs) == "襄阳挺远的，十五个小时够你睡一觉"
 
 
-def test_maybe_append_emoji_uses_pool_only():
-    """追加表情只从白名单池取 id（若确实加了）。"""
+def test_maybe_append_emoji_noop_when_pool_empty():
+    """_EMOJI_POOL 为空时，_maybe_append_emoji 不追加任何 face 标记。"""
     for _ in range(50):
-        for c in _maybe_append_emoji(["你好"]):
-            for fid in re.findall(r"\[face:(\d+)\]", c):
-                assert int(fid) in _EMOJI_POOL
+        out = _maybe_append_emoji(["你好"])
+        assert all("[face:" not in c for c in out)
+
+
+def test_image_file_converts_windows_path():
+    """本地 Windows 路径转成 file:/// URI，正斜杠。"""
+    uri = image_file(r"D:\DSH\TZtuzhan\data\stickers\x.gif")
+    assert uri.startswith("file:///")
+    assert uri.endswith("/DSH/TZtuzhan/data/stickers/x.gif")
+    # 不再含反斜杠
+    assert "\\" not in uri
+
+
+def test_image_file_passthrough_remote():
+    """http/https/file URL 原样返回，不乱改。"""
+    assert image_file("https://example.com/a.jpg") == "https://example.com/a.jpg"
+    assert image_file("file:///D:/x.jpg") == "file:///D:/x.jpg"

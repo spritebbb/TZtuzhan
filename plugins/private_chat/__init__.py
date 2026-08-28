@@ -14,7 +14,7 @@ from core import affection
 from core.config import config
 from core.imagegen import generate as generate_image
 from core.log import logger
-from core.message_build import _build_message, _maybe_append_emoji
+from core.message_build import _build_message, _maybe_append_emoji, image_file
 from core.pipeline import clean_address, process
 from core.proactive import send_proactive_now, set_active_user
 from core.search import last_error as search_last_error, web_search
@@ -94,7 +94,7 @@ async def handle_draw(event: PrivateMessageEvent):
         await draw_cmd.finish(Message(f"……画到一半颜料没了：{hint}"))
         return
     try:
-        await draw_cmd.send(Message(MessageSegment.image(file=path)))
+        await draw_cmd.send(Message(MessageSegment.image(file=image_file(path))))
     except Exception:
         logger.exception("[生图] 发送失败")
         await draw_cmd.finish(Message("画好了，但发不出去……"))
@@ -195,7 +195,7 @@ async def _debounce_flush(user_id: str) -> None:
                         await asyncio.sleep(config.think_delay * 0.7)
                         await bot.send_private_msg(
                             user_id=int(user_id),
-                            message=Message(MessageSegment.image(file=path)),
+                            message=Message(MessageSegment.image(file=image_file(path))),
                         )
                         logger.info("[生图] {} 对话生图完成", user_id)
                     else:
@@ -281,7 +281,7 @@ async def _send_sticker(event, sticker: dict) -> None:
             return
         # 酝酿一下，像真人随手发
         await asyncio.sleep(config.think_delay * 0.6)
-        await private_msg.send(Message(MessageSegment.image(file=file_path)))
+        await private_msg.send(Message(MessageSegment.image(file=image_file(file_path))))
     except Exception:
         logger.exception("[表情回发] 发送失败：{}", sticker.get("file", ""))
 
@@ -293,7 +293,7 @@ async def _send_sticker_to(bot, user_id: str, sticker: dict) -> None:
         if not file_path or not Path(file_path).exists():
             return
         await asyncio.sleep(config.think_delay * 0.6)
-        await _bot_send_with_retry(bot, user_id, Message(MessageSegment.image(file=file_path)))
+        await _bot_send_with_retry(bot, user_id, Message(MessageSegment.image(file=image_file(file_path))))
     except Exception:
         logger.exception("[表情回发] 发送失败：{}", sticker.get("file", ""))
 

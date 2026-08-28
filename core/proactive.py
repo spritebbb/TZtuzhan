@@ -15,6 +15,7 @@ from .config import config
 from .llm import chat
 from .log import logger
 from .memory import short_term_messages
+from .message_build import image_file
 from .persona import build_system_prompt
 from .pipeline import _extract_reply, strip_actions
 from .userdb import db
@@ -193,7 +194,7 @@ async def send_proactive_now(bot, user_id: str) -> bool:
                         logger.warning("[主动] 表情话术失败（不影响发图）")
                     await asyncio.sleep(config.send_interval)
                     await _send_with_retry(
-                        bot, user_id, Message(MessageSegment.image(file=sticker))
+                        bot, user_id, Message(MessageSegment.image(file=image_file(sticker)))
                     )
         except Exception:
             logger.warning("[主动] 表情包推荐失败（不影响主动消息）")

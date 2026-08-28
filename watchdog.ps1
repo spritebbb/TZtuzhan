@@ -117,8 +117,22 @@ function Stop-Bot {
     Start-Sleep -Seconds 1
 }
 
-# ---- NapCat 是否在线：判据 = 3001 端口在监听（WS 服务端）或旧版 node server.js 进程 ----
-function Test-Napcat {
+# ---- QQ 是否真在线：调用 napcat_probe.py 发 get_status 探测 ----
+# 比仅测 3001 端口更可靠——QQ 被风控踢下线时 WS 端口可能仍在监听。
+# 返回 $true 表示 QQ 在线；$false 表示离线/未连接。
+function Test-QqOnline {
+    $probe = Join-Path $Root 'napcat_probe.py'
+    if (-not (Test-Path $probe)) {
+        Log "[napcat] ✗ 找不到 $probe, 回退到端口检测" 'Yellow'
+        $port = Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue
+        return ($null -ne $port -and $port.Count -ge 1)
+    }
+    $out = & $VenvPy -X utf8 $probe 'ws://127.0.0.1:3001/' 8 2>&1
+    return $LASTEXITCODE -eq 0
+}
+
+# ---- NapCat 是否在线（端口监听的后备判据）----
+function Test-NapcatPort {
     $port = Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue
     if ($port) { return $true }
     # 兼容旧版：node server.js 是 NapCat 主进程
@@ -128,13 +142,40 @@ function Test-Napcat {
     return $false
 }
 
-# ---- 启动 NapCat（可选，需要管理员/会弹 UAC）----
+# ---- 干净重启 NapCat：杀掉 QQ/NapCat 进程后重新拉起 launcher ----
+# QQ 被风控踢下线时，先停掉旧进程再拉起，NapCat 会自动重新登录。
+function Restart-Napcat {
+    Log '[napcat] 检测到 QQ 离线/NapCat 异常，尝试重启 ...' 'Yellow'
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    # 写本次重启时间（供去抖：连续重启太频繁说明有问题，暂停几轮）
+    $stamp | Set-Content -Path (Join-Path $DataDir 'napcat_restart_ts') -Encoding UTF8
+
+    # 1) 停掉 QQ 与 NapCat（用提权，避免权限不足残留）
+    try {
+        $killCmd = 'taskkill /f /im QQ.exe; taskkill /f /im QQEX.exe; taskkill /f /im NapCatWinBootMain.exe; Start-Sleep 1'
+        Start-Process powershell -Verb runAs -ArgumentList "-NoProfile -Command `"$killCmd`"" -Wait -ErrorAction SilentlyContinue
+    } catch {
+        Log "[napcat] ✗ 停止旧进程失败（需管理员）: $($_.Exception.Message)" 'Red'
+    }
+
+    # 2) 等端口释放
+    Start-Sleep -Seconds 3
+
+    # 3) 拉起 launcher（NapCat 自动登录已登录的 QQ）
+    Start-Napcat
+
+    # 4) 等 NapCat 起来并等 bot 重连
+    Start-Sleep -Seconds 10
+    Log '[napcat] 已重启，等待 QQ 重新登录与 bot 重连 ...' 'Green'
+}
+
+# ---- 启动 NapCat ----
 function Start-Napcat {
     if (-not (Test-Path $NapcatLauncher)) {
         Log "[napcat] ✗ 找不到 launcher.bat" 'Red'
         return
     }
-    Log "[napcat] 尝试拉起 launcher.bat（需管理员，可能弹 UAC）..." 'Yellow'
+    Log '[napcat] 拉起 launcher.bat（需管理员，可能弹 UAC）...' 'Yellow'
     try {
         Start-Process -FilePath 'cmd.exe' `
             -ArgumentList "/c chcp 65001 >nul & cd /d `"$(Split-Path $NapcatLauncher)`" & launcher.bat" `
@@ -167,18 +208,32 @@ function Invoke-Guard {
         $report.bot_running = $true
     }
 
-    # ② NapCat
-    $nap = Test-Napcat
-    $report.napcat_ws = $nap
-    if (-not $nap) {
-        Log '[guard] ⚠️ NapCat (WS 3001) 未运行' 'Yellow'
-        if ($WithNapCat) {
-            Start-Napcat
-        } else {
-            Log '[guard] （未启用 WithNapCat，仅提醒；可加 -WithNapCat 自动拉起）' 'Gray'
-        }
+    # ② QQ / NapCat 是否真正在线
+    $qqOnline = Test-QqOnline
+    $report.qq_online = $qqOnline
+    $report.napcat_ws = (Test-NapcatPort)
+    if ($qqOnline) {
+        Log '[guard] QQ 在线 (get_status=online)' 'Green'
     } else {
-        Log '[guard] NapCat WS 正常' 'Green'
+        Log '[guard] ⚠️ QQ 离线 / NapCat 未连接（WS 服务端可能还在，但账号已掉线）' 'Yellow'
+        if ($WithNapCat) {
+            # 重启去抖：距上次重启不足 5 分钟则跳过，避免 QQ 反复被踢时无限重启风暴
+            $tsFile = Join-Path $DataDir 'napcat_restart_ts'
+            $tooSoon = $false
+            if (Test-Path $tsFile) {
+                try {
+                    $last = [datetime]::ParseExact((Get-Content $tsFile -Raw).Trim(), 'yyyyMMdd-HHmmss', $null)
+                    $tooSoon = ((Get-Date) - $last).TotalMinutes -lt 5
+                } catch { $tooSoon = $false }
+            }
+            if ($tooSoon) {
+                Log '[guard] 距上次重启 NapCat 不到 5 分钟，跳过本次重启（避免重启风暴）' 'Gray'
+            } else {
+                Restart-Napcat
+            }
+        } else {
+            Log '[guard] （未启用 WithNapCat，仅提醒；可加 -WithNapCat 自动重启 NapCat）' 'Gray'
+        }
     }
 
     Write-State $report

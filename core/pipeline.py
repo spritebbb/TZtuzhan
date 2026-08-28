@@ -102,8 +102,12 @@ def trim_farewell(user_text: str, reply: str) -> str:
     return _FAREWELL_REPLY.get(word, f"{word}")
 
 
-async def process(user_id: str, text: str, *, mock: bool = False) -> str:
-    """处理一条用户消息，返回菟菚的回复。"""
+async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bool = False) -> str:
+    """处理一条用户消息，返回菟菚的回复。
+
+    merged_msg=True 表示 text 是用户连续发送的多条消息合并成的一段话，
+    提示模型把这段当成对方一次性的完整表达，用一句精简的话回应整体，不逐条复读。
+    """
     user = db.ensure_user(user_id)
     first_chat = not user["first_chat_done"]
 
@@ -322,6 +326,20 @@ async def process(user_id: str, text: str, *, mock: bool = False) -> str:
         )
     messages.extend(ctx)
     messages.append({"role": "user", "content": text})
+
+    # 对方连发多条合并成一段话 → 提示整体理解，只回一句精简的话
+    if merged_msg:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "对方刚才连着发了好几条，已合并成上面一段话（用换行分隔）。"
+                    "请把它当成对方一次性说的一段完整的话，抓住其中真正想表达的核心，"
+                    "**用一句精简的话回应整体的意思**，不要逐条复读、不要对应每一条分别回应，"
+                    "保持慵懒自然、说重点。"
+                ),
+            }
+        )
 
     # 对方回得很短 → 提示模型别让话题冷场（借一句接住）
     if len(text) <= 4:

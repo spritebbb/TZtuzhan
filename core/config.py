@@ -35,6 +35,9 @@ class Config:
         # 收到消息后到发第一条回复的"酝酿"延迟（秒）：
         # 模拟真人看到消息、想一下、开始打字的节奏，避免秒回显得像机器人
         self.think_delay: float = float(os.getenv("THINK_DELAY", "2.0"))
+        # 消息去抖窗口（秒）：用户连发消息时，此时间内到达的都合并成一条整体处理。
+        # 菟菚会等用户把话说完整（观察对方会不会继续打第二句/第三句），再精简成一句回应。
+        self.debounce_seconds: float = float(os.getenv("DEBOUNCE_SECONDS", "4.0"))
 
         # 主动发消息（久别后菟菚主动找你）
         self.proactive_check_minutes: float = float(os.getenv("PROACTIVE_CHECK_MINUTES", "15"))

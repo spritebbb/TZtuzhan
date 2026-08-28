@@ -99,9 +99,8 @@ async def handle_draw(event: PrivateMessageEvent):
         await draw_cmd.finish(Message("画好了，但发不出去……"))
 
 
-# 消息去抖合并：用户连发消息时，短暂等待后合并为一条处理
-_DEBOUNCE_SECONDS = 2.2  # 连发窗口（此时间内到达的消息合并为一条）
-_pending_items: dict[str, list[dict]] = {}  # user_id → [{text, extras, images, event}]
+# 消息去抖合并：用户连发消息时，等待用户把话说完，再合并成一条整体处理
+_pending_items: dict[str, list[dict]] = {}  # user_id → [{text, extras, images}]
 _debounce_tasks: dict[str, asyncio.Task] = {}  # user_id → asyncio.Task
 
 
@@ -142,9 +141,13 @@ async def handle_private(event: PrivateMessageEvent):
 
 
 async def _debounce_flush(user_id: str) -> None:
-    """去抖到点后：合并连发消息 → 走 pipeline → 发回复 → 副动作（收藏/生图）。"""
+    """去抖到点后：等用户把话说完，合并成一条整体消息 → pipeline → 精简回复。
+
+    菟菚不会对用户每一句都回应——而是等对方连发的多条消息合成一段话，
+    作为"对方一次性说的一段话"整体理解，用一句精简的话回应。
+    """
     try:
-        await asyncio.sleep(_DEBOUNCE_SECONDS)
+        await asyncio.sleep(config.debounce_seconds)  # 观察窗口：等用户不再连发
         items = _pending_items.pop(user_id, [])
         _debounce_tasks.pop(user_id, None)
         if not items:
@@ -156,7 +159,7 @@ async def _debounce_flush(user_id: str) -> None:
         if bot is None:
             logger.warning("[去抖] {} 的 bot 引用为空，跳过回复", user_id)
             return
-        # 合并连发消息
+        # 合并连发消息为一段文本（用换行连接，标记成对方连续说的一段话）
         merged_parts: list[str] = []
         incoming_images: list[str] = []
         for it in items:
@@ -208,7 +211,7 @@ async def _debounce_flush(user_id: str) -> None:
 
         # 走 pipeline 主回复
         try:
-            reply = await process(user_id, merged)
+            reply = await process(user_id, merged, merged_msg=True)
         except Exception as e:
             logger.exception("[去抖] 处理消息失败：{}", merged[:30])
             reply = f"……藤蔓打结了\n（{e}）"

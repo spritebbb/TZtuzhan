@@ -65,14 +65,19 @@ async def describe_image(url: str) -> str:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "用一句简短的中文描述这张图片/表情包的内容，突出主题。"},
+                        {"type": "text", "text": "直接输出一句简短的中文描述，只描述这张图片/表情包的内容和主题，不要任何思考过程或解释，不要加引号。"},
                         {"type": "image_url", "image_url": {"url": data_url}},
                     ],
                 }
             ],
-            max_tokens=200,
+            max_tokens=300,
         )
-        return (resp.choices[0].message.content or "").strip()
+        msg = resp.choices[0].message
+        content = (msg.content or "").strip()
+        if not content:
+            # 某些推理视觉模型把答案写进 reasoning_content，content 为空 → 回退取思考内容
+            content = (getattr(msg, "reasoning_content", None) or "").strip()
+        return content
     except Exception:
         logger.warning("[识图] 图片描述失败（返回空，按表情包处理）：{}", url)
         return ""

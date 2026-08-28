@@ -218,10 +218,10 @@ async def _debounce_flush(user_id: str) -> None:
         # 发送回复（用 bot API 直接发，不依赖 matcher）
         await _send_reply_to(bot, user_id, reply)
         logger.info("[去抖] {} 回复完成：{}", user_id, reply[:30])
-        # 副动作：收到纯图 → 先回应一句，再收藏回发（配一句自然的话）
+        # 副动作：收到纯图 → 只说一句话（回应+收藏意图，不叠加第二句配话）
         has_text = bool(items[0]["text"].strip()) or any(it["text"].strip() for it in items)
         if incoming_images and not has_text:
-            # ① 收到表情包先回应（用视觉描述生成，失败回退固定话）
+            # ① 收到表情包先回应一句（含"我存了/收进仓库"的收藏意味），失败回退固定话
             try:
                 from core.speak import on_receive_img
 
@@ -232,7 +232,7 @@ async def _debounce_flush(user_id: str) -> None:
                     await _send_reply_to(bot, user_id, ack)
             except Exception:
                 logger.exception("[话术] 收到图片回应失败")
-            # 收藏 + 回发（配一句自然话再发图）
+            # ② 收藏（回发时带一句自然话；但用视觉描述作话题，避免固定词）
             for url in incoming_images:
                 await collect_sticker(user_id, url)
             sticker = pick_sticker(user_id, "", 1)
@@ -240,7 +240,7 @@ async def _debounce_flush(user_id: str) -> None:
                 try:
                     from core.speak import with_sticker
 
-                    talk = await with_sticker("对方刚发来一张表情包")
+                    talk = await with_sticker(img_desc or "你发来的表情包")
                     if talk:
                         await _send_reply_to(bot, user_id, talk)
                 except Exception:

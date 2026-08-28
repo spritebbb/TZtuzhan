@@ -22,6 +22,14 @@ def test_clean_banned_words():
     assert _clean("这张图你肯定喜欢") != ""  # 正常话保留
 
 
+def test_clean_filters_cliches():
+    # 万金油套话也必须过滤（避免"每次都说有点意思/不错/可爱"）
+    assert _clean("这个表情包有点意思") == ""
+    assert _clean("挺可爱的") == ""
+    assert _clean("哈哈真不错") == ""
+    assert _clean("这张进我小仓库啦") != ""  # 具体话保留
+
+
 def test_clean_limits_length():
     # 明显超过 24 字 → 清空
     long_line = "这是一句特别特别特别特别特别特别特别特别特别特别特别特别长的话"

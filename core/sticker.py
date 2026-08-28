@@ -6,6 +6,7 @@
 """
 import base64
 import hashlib
+import random
 import urllib.request
 from pathlib import Path
 
@@ -77,16 +78,16 @@ def pick(user_id: str, keyword: str, limit: int = 30) -> list[dict]:
 
 
 def get_recent_sticker(user_id: str) -> str | None:
-    """挑一张用户最近收藏的表情包（本地路径），用于主动消息带图。
+    """随机挑一张用户收藏的表情包（本地路径），用于主动消息带图。
 
-    优先挑近期收藏（靠后的记录），返回文件路径；无收藏返回 None。
+    从热门收藏里随机取一张，避免每次都发"最近收藏的那一张"。
+    无收藏返回 None。
     """
     try:
-        stickers = get_stickers(user_id, 10)
+        stickers = get_stickers(user_id, 20)
         if not stickers:
             return None
-        # 取最后一张（最近收藏的）
-        return stickers[-1]["file"]
+        return random.choice(stickers)["file"]
     except Exception:
         return None
 

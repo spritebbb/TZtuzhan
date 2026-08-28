@@ -1,6 +1,6 @@
 """菟菚的今日日程表：给她一套有生活气息的作息，能自然地说出来。
 
-- 固定作息模板：一天分成几个时段，每个时段有菟菚会做的事
+- 固定作息模板：按好感度阶段变化（初识疏离→恋人黏人），体现菟丝子娘身份
 - 心情调剂：开心/慵懒/低落等状态会改变安排（心情好→想找人分享，低落→宅着）
 - 天气调剂：晴→想晒太阳，雨→窝着听雨，雪→看雪
 - 特殊日子：生日/纪念日等（联动 important_dates）当天有特别安排
@@ -10,21 +10,196 @@
 """
 import json
 import random
+import string
 from datetime import date
 
 from .config import config
 from .log import logger
 from .userdb import db, kv_get, kv_set
 
-# ---- 固定作息模板：时段 → 菟菚会做的事（含慵懒/温柔/菟丝子意象）----
-_BASE_SCHEDULE = [
-    ("清晨", "慢悠悠醒来，窝在被子里赖一会儿，等太阳暖起来"),
-    ("上午", "晒会儿太阳，软软地发发呆，看看窗外"),
-    ("中午", "懒洋洋的，随便吃点什么，困了就眯一会儿"),
-    ("下午", "安静地待着，翻翻想看的，偶尔想想你"),
-    ("傍晚", "天变凉了，缩起来，听点喜欢的音乐"),
-    ("晚上", "窝在舒适的角落，想跟你多说会儿话"),
-]
+# ---- 好感度阶段 → 基础作息模板 ----
+# 菟菚是菟丝子娘：爱光、爱水、安静、慢悠悠、慵懒温柔。
+# 但不同阶段她对"你"的态度不同——初识疏离独立、恋人黏人缠着。
+# 措辞上用"光""暖"代替"太阳"，避免违背第47条"不主动提晒太阳"。
+_SCHEDULE_BY_STAGE = {
+    "初识": [
+        # 冷淡、疏远、克制——自己的小世界，不围着谁转
+        ("清晨", "慢悠悠醒过来，窝在暖和的地方赖一会儿，等光慢慢亮起来"),
+        ("上午", "找一处安静的角落待着，喝点温水，看看窗外"),
+        ("中午", "随便吃点什么，困了就眯一会儿"),
+        ("下午", "安静地待着，翻翻喜欢的东西，不被打扰"),
+        ("傍晚", "天凉下来，缩进柔软的地方，听点轻轻的声音"),
+        ("晚上", "自己安安静静地待着，不会主动找人说话"),
+    ],
+    "熟悉": [
+        # 稍放松，会开玩笑，但仍保持距离
+        ("清晨", "慢悠悠醒来，在被窝里赖一会儿，等光慢慢亮起来"),
+        ("上午", "找个舒服的地方待着，喝点温水，发发呆"),
+        ("中午", "懒洋洋地吃点什么，困了就眯一会儿"),
+        ("下午", "安静地待着，翻翻想看的，偶尔会想到你"),
+        ("傍晚", "天凉了，缩起来听点轻轻的声音"),
+        ("晚上", "一个人待着也挺好，但有时会想找人说句话"),
+    ],
+    "亲密": [
+        # 明显亲近，会主动找你，黏人一面开始出现
+        ("清晨", "醒过来赖一会儿，想着今天会不会收到你的消息"),
+        ("上午", "在暖和的地方待着，喝点温水，等你出现"),
+        ("中午", "懒洋洋地吃点什么，吃完了又想你"),
+        ("下午", "软软地待着，翻翻喜欢的东西，想你在做什么"),
+        ("傍晚", "天凉了，缩起来，有点想找你说话"),
+        ("晚上", "夜色静下来，想找你聊会儿天，说点什么"),
+    ],
+    "恋人": [
+        # 完全放开，黏人、病娇、占有欲
+        ("清晨", "慢悠悠醒来，蜷在被窝里，想你在就好了"),
+        ("上午", "懒懒地待着，喝温水，等你的消息，藤蔓不自觉地伸向你那边"),
+        ("中午", "随便吃点什么，想着你，想缠着你"),
+        ("下午", "软软地待着，翻翻东西，但心里一直挂着你"),
+        ("傍晚", "天凉了，缩进柔软的地方，想听你说话"),
+        ("晚上", "想一直缠着你，舍不得松开"),
+    ],
+}
+
+# 默认阶段（以防用户没有好感度记录）
+_DEFAULT_STAGE = "初识"
+
+# ---- 大模型生成每日日程 ----
+# 让 LLM 按菟菚的身份（菟丝子娘）与性格（慵懒/温柔/黏人按阶段）每天随机生成，
+# 比固定模板更有生活气息、每天不同。失败时退回规则模板。
+_SCHEDULE_PROMPT = """你是「菟菚」，一个菟丝子娘——外表温柔可爱的女孩子，带着菟丝子的习性：爱光、爱水、爱安静，做什么都慢悠悠、懒洋洋的。你喜欢安静、温水、柔软温暖的东西，喜欢轻轻缠着喜欢的人。
+
+为菟菚生成她**今天一天**的日程安排（6 个时段）。要像真人每天随心情安排一样，每天不一样、有生活气息。
+
+必须结合以下当日信息：
+- 今天日期：$today
+- 今日天气：$weather
+- 菟菚今天的心情：$mood
+- 好感度阶段：$stage（这决定她对喜欢的人的态度，见下）
+
+阶段行为：
+- 初识：冷淡疏远、克制，不会主动找人说话，日程是独处的小世界
+- 熟悉：稍放松，偶尔会想到对方，但保持距离
+- 亲密：明显亲近，会期待/想找对方聊天，日程里自然带出
+- 恋人：黏人、病娇、占有欲，想缠着对方，日程里自然带出
+
+要求：
+1. 每个时段一句，体现菟菚的性格（慵懒、慢悠悠、爱安静、喜欢光和水、软绵绵温柔），写得具体、有画面感
+2. 菟丝子意象（藤蔓/缠绕）只能淡淡点缀，**最多 1 处**，别满篇都是
+3. 用「光」「暖」「水」这类词代替「晒太阳」（这是她的私事）
+4. 感情阶段不同，她对待对方的态度不同，要在日程里自然流露
+5. 时段名必须严格是：清晨、上午、中午、下午、傍晚、晚上
+6. 只输出 JSON，不要任何其他文字：
+{"schedule": [{"period": "清晨", "todo": "..."}, ...]}"""
+
+
+def _parse_llm_schedule(resp: str) -> list[dict] | None:
+    """解析 LLM 输出的日程 JSON；结构不完整返回 None。"""
+    text = resp.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    if text.startswith("json"):
+        text = text[4:].strip()
+    try:
+        data = json.loads(text)
+    except Exception:
+        return None
+    items = data.get("schedule", []) if isinstance(data, dict) else []
+    if not isinstance(items, list):
+        return None
+    allowed = {"清晨", "上午", "中午", "下午", "傍晚", "晚上"}
+    out: list[dict] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        period = str(it.get("period", "")).strip()
+        todo = str(it.get("todo", "")).strip()
+        if period in allowed and todo:
+            out.append({"period": period, "todo": todo})
+    # 要求覆盖全部 6 个时段
+    if len(out) < 6:
+        return None
+    return out[:6]
+
+
+async def _generate_via_llm(user_id: str, *, city: str = "") -> list[dict] | None:
+    """用 LLM 生成菟菚今天的日程（异步）；失败返回 None。"""
+    from datetime import date as _date
+
+    from .llm import chat
+
+    stage = _stage_of(user_id)
+    weather = _weather_kind(city) or "未知"
+    special = _special_kind(user_id)
+    special_desc = (
+        {"birthday": "今天是你的生日，日程里要自然地带上这份特别",
+         "anniversary": "今天是你们的纪念日，日程里要自然地带上这份特别",
+         "other": "今天是个特别的日子，日程里要自然地带上这份特别"}.get(special, "普通的一天")
+        if special
+        else "普通的一天"
+    )
+    mood_label = ""
+    try:
+        from .mood import current_mood
+
+        _, mood_label = current_mood(user_id, city=city)
+    except Exception:
+        pass
+    mood_label = mood_label or "慵懒"
+    today = _date.today().strftime("%Y年%m月%d日 %A")
+
+    prompt = string.Template(_SCHEDULE_PROMPT).substitute(
+        today=today,
+        weather=f"{weather}（{special_desc}）",
+        mood=mood_label,
+        stage=stage,
+    )
+    try:
+        resp = await chat(
+            [{"role": "system", "content": "你是日程生成助手，只输出 JSON。"},
+             {"role": "user", "content": prompt}],
+            temperature=1.0,  # 高随机性：每天安排都不一样
+            max_tokens=600,
+        )
+        sched = _parse_llm_schedule(resp)
+        return sched
+    except Exception:
+        logger.warning("[日程] LLM 生成失败，退回规则模板")
+        return None
+
+
+def _rule_schedule(user_id: str, *, city: str = "") -> list[dict]:
+    """规则版日程（兜底）：按好感度阶段选模板 + 天气/心情调剂。"""
+    stage = _stage_of(user_id)
+    base_schedule = _SCHEDULE_BY_STAGE.get(stage, _SCHEDULE_BY_STAGE[_DEFAULT_STAGE])
+
+    mood_label = ""
+    try:
+        from .mood import current_mood
+
+        _, mood_label = current_mood(user_id, city=city)
+    except Exception:
+        pass
+
+    weather = _weather_kind(city)
+    special = _special_kind(user_id)
+
+    schedule: list[dict] = []
+    for period, base in base_schedule:
+        parts = [base]
+        if special:
+            parts.insert(0, _SPECIAL_FLAVOR.get(special, ""))
+            parts.append("今天这份特别，我想只跟你分享。")
+        elif weather:
+            parts.append(_WEATHER_FLAVOR.get(weather, ""))
+        desc = "，".join(p for p in parts if p)
+        schedule.append({"period": period, "todo": desc})
+
+    if not special and not weather and mood_label and schedule:
+        idx = random.randrange(len(schedule))
+        note = _MOOD_FLAVOR.get(mood_label, "")
+        if note:
+            schedule[idx]["todo"] += "，" + note
+    return schedule
 
 # ---- 心情调剂：心情状态 → 给某一段补充的"当日心情基调"（独立短句，不与基础重复）----
 _MOOD_FLAVOR = {
@@ -58,16 +233,29 @@ _SPECIAL_FLAVOR = {
 
 # ---- 时段情绪基调偏移：每个时段自带的心情底色（叠加在天气基线上）----
 # 键为起始小时（24h 制），区间为 [start, next_start)
-_PERIOD_MOOD = [
-    (5, 9, 0, "清晨"),      # 清晨：刚醒，慵懒平和
-    (9, 11, 2, "上午"),     # 上午：晒太阳发呆，安静舒适
-    (11, 14, 0, "中午"),    # 中午：懒洋洋
-    (14, 17, 1, "下午"),    # 下午：安静待着，偶尔想想你
-    (17, 19, 3, "傍晚"),    # 傍晚：听音乐，放松
-    (19, 23, 5, "晚上"),    # 晚上：想陪你，期待/黏人
-    (23, 24, 0, "深夜"),    # 深夜：困了，安静
-    (0, 5, 0, "凌晨"),      # 凌晨：睡着了/安静
-]
+# 偏移随好感度阶段变化：初识晚上不黏人（+1），恋人晚上最期待（+5）
+_PERIOD_MOOD_BY_STAGE = {
+    "初识": [
+        (5, 9, 0, "清晨"), (9, 11, 1, "上午"), (11, 14, 0, "中午"),
+        (14, 17, 0, "下午"), (17, 19, 2, "傍晚"), (19, 23, 1, "晚上"),
+        (23, 24, 0, "深夜"), (0, 5, 0, "凌晨"),
+    ],
+    "熟悉": [
+        (5, 9, 0, "清晨"), (9, 11, 2, "上午"), (11, 14, 0, "中午"),
+        (14, 17, 1, "下午"), (17, 19, 2, "傍晚"), (19, 23, 3, "晚上"),
+        (23, 24, 0, "深夜"), (0, 5, 0, "凌晨"),
+    ],
+    "亲密": [
+        (5, 9, 0, "清晨"), (9, 11, 2, "上午"), (11, 14, 1, "中午"),
+        (14, 17, 2, "下午"), (17, 19, 3, "傍晚"), (19, 23, 4, "晚上"),
+        (23, 24, 0, "深夜"), (0, 5, 0, "凌晨"),
+    ],
+    "恋人": [
+        (5, 9, 0, "清晨"), (9, 11, 2, "上午"), (11, 14, 1, "中午"),
+        (14, 17, 2, "下午"), (17, 19, 3, "傍晚"), (19, 23, 5, "晚上"),
+        (23, 24, 0, "深夜"), (0, 5, 0, "凌晨"),
+    ],
+}
 
 # 特殊日子全天额外情绪加成（生日/纪念日当天会更开心）
 _SPECIAL_MOOD_BONUS = {
@@ -77,16 +265,34 @@ _SPECIAL_MOOD_BONUS = {
 }
 
 
-def period_for_hour(hour: int) -> str:
+def _stage_of(user_id: str) -> str:
+    """读取用户好感度阶段（初识/熟悉/亲密/恋人），失败返回默认。"""
+    try:
+        from .affection import stage_of as affection_stage
+
+        from .userdb import db as _db
+
+        row = _db.conn.execute(
+            "SELECT affection FROM users WHERE user_id=?", (user_id,)
+        ).fetchone()
+        if row:
+            return affection_stage(row["affection"])
+    except Exception:
+        pass
+    return _DEFAULT_STAGE
+
+
+def period_for_hour(hour: int, stage: str | None = None) -> str:
     """当前小时（0-23）→ 所属日程时段名。"""
-    for start, end, _, name in _PERIOD_MOOD:
+    table = _PERIOD_MOOD_BY_STAGE.get(stage or "", _PERIOD_MOOD_BY_STAGE["恋人"])
+    for start, end, _, name in table:
         if start <= hour < end:
             return name
     return "晚上"
 
 
 def schedule_mood_offset(user_id: str, *, city: str = "", hour: int | None = None) -> int:
-    """今日日程带来的心情偏移：时段情绪 + 特殊日子加成。
+    """今日日程带来的心情偏移：时段情绪（按阶段）+ 特殊日子加成。
 
     用于 mood 模块把日程影响叠进心情基线。纯规则、失败返回 0，不影响对话。
     """
@@ -98,9 +304,11 @@ def schedule_mood_offset(user_id: str, *, city: str = "", hour: int | None = Non
         # 特殊日子加成（全天有效）
         special = _special_kind(user_id)
         bonus = _SPECIAL_MOOD_BONUS.get(special, 0) if special else 0
-        # 当前时段情绪
+        # 当前时段情绪（按好感度阶段：恋人晚上更黏人/期待）
+        stage = _stage_of(user_id)
+        table = _PERIOD_MOOD_BY_STAGE.get(stage, _PERIOD_MOOD_BY_STAGE[_DEFAULT_STAGE])
         period_offset = 0
-        for start, end, offset, _name in _PERIOD_MOOD:
+        for start, end, offset, _name in table:
             if start <= hour < end:
                 period_offset = offset
                 break
@@ -136,57 +344,47 @@ def _special_kind(user_id: str) -> str | None:
     return None
 
 
+def _cache_key() -> str:
+    return f"schedule:{date.today().isoformat()}"
+
+
 def build_schedule(user_id: str, *, city: str = "") -> list[dict]:
-    """生成菟菚今天的日程表：[(时段, 事项)]，一次性生成并缓存。"""
-    today = date.today()
-    cache_key = f"schedule:{today.isoformat()}"
+    """读当日日程：优先缓存；无缓存时用规则模板兜底（不写缓存，等 LLM 覆盖）。
+
+    同步、不阻塞；pipeline 会先调 ensure_schedule 让 LLM 生成。
+    """
+    cache_key = _cache_key()
     cached = kv_get(user_id, cache_key)
     if cached:
         try:
             return json.loads(cached)
         except Exception:
             pass
+    return _rule_schedule(user_id, city=city)
 
-    # 读取当天心情（用于调剂）
-    mood_val = 60
-    mood_label = ""
+
+async def ensure_schedule(user_id: str, *, city: str = "") -> list[dict]:
+    """确保当日日程已生成（LLM 优先，规则兜底），返回日程。
+
+    当天首次调用时用 LLM 随机生成并写缓存；同一天后续直接读缓存。
+    在 pipeline 构造 prompt 前调用，让 schedule_prompt 能拿到 LLM 版日程。
+    """
+    cache_key = _cache_key()
+    cached = kv_get(user_id, cache_key)
+    if cached:
+        try:
+            return json.loads(cached)
+        except Exception:
+            pass
+    # 用 LLM 生成（失败则规则兜底）
+    sched = await _generate_via_llm(user_id, city=city) or _rule_schedule(
+        user_id, city=city
+    )
     try:
-        from .mood import current_mood
-
-        mood_val, mood_label = current_mood(user_id, city=city)
+        kv_set(user_id, cache_key, json.dumps(sched, ensure_ascii=False))
     except Exception:
         pass
-
-    weather = _weather_kind(city)
-    special = _special_kind(user_id)
-
-    schedule: list[dict] = []
-    for period, base in _BASE_SCHEDULE:
-        # 基础作息本身每段就不同（清晨/上午/中午…各有安排），这是"固定模板"
-        parts = [base]
-        # 特殊日子优先（当天最有意义，替换/强化整天的基调）
-        if special:
-            parts.insert(0, _SPECIAL_FLAVOR.get(special, ""))
-            parts.append("今天这份特别，我想只跟你分享。")
-        # 天气调剂：全天都有同一种天气氛围（如下雨→都听着雨），叠在后
-        elif weather:
-            parts.append(_WEATHER_FLAVOR.get(weather, ""))
-        # 心情调剂：只在最后一段点缀一句（避免每段重复，保留日常差异感）
-        desc = "，".join(p for p in parts if p)
-        schedule.append({"period": period, "todo": desc})
-
-    # 心情调剂：在无特殊/无天气时，给某一段（随机挑）加一句心情点缀，其余保留日常
-    if not special and not weather and mood_label and schedule:
-        idx = random.randrange(len(schedule))
-        note = _MOOD_FLAVOR.get(mood_label, "")
-        if note:
-            schedule[idx]["todo"] += "，" + note
-
-    try:
-        kv_set(user_id, cache_key, json.dumps(schedule, ensure_ascii=False))
-    except Exception:
-        pass
-    return schedule
+    return sched
 
 
 def describe(user_id: str, *, city: str = "") -> str:
@@ -214,6 +412,6 @@ def schedule_prompt(user_id: str, *, city: str = "") -> str:
     return (
         "**你今天的日常（心里有数就行，别主动逐条汇报）**："
         f"{seg}……后面的随心情来。"
-        "只在这几句里自然带出：对方问你在干嘛、或话题合适时，可以随口说「我刚在晒太阳」「刚发完呆」这类；"
+        "只在这几句里自然带出：对方问你在干嘛、或话题合适时，可以随口说「刚在发呆」「刚窝着」这类；"
         "没事别主动报日程。"
     )

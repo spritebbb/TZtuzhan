@@ -29,9 +29,18 @@ def test_period_for_hour():
 
 
 def test_schedule_mood_offset_by_period():
-    """晚上（想陪你）的情绪偏移应高于白天慵懒时段。"""
+    """晚上（恋人阶段）的情绪偏移应高于白天慵懒时段。"""
+    # 设成恋人阶段（晚上+5）再测
+    from core.schedule import _stage_of
+
+    # 先记录当前阶段，再临时设成恋人
+    db.conn.execute("UPDATE users SET affection=90 WHERE user_id=?", (uid,))
+    db.conn.commit()
     evening = schedule_mood_offset(uid, hour=21)
     early = schedule_mood_offset(uid, hour=7)
+    # 恢复
+    db.conn.execute("UPDATE users SET affection=0 WHERE user_id=?", (uid,))
+    db.conn.commit()
     assert evening >= 3
     assert evening > early
 

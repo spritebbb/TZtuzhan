@@ -26,9 +26,19 @@ def test_schedule_has_all_periods():
 
 
 def test_schedule_cached_same_day():
-    """同一天内重复生成应返回相同内容（缓存到 kv_store）。"""
-    a = schedule.build_schedule(uid)
-    b = schedule.build_schedule(uid)
+    """同一天内重复生成应返回相同内容（缓存到 kv_store）。
+
+    build_schedule 同步版不写缓存（规则兜底，随机调剂可能不同）；
+    缓存一致性由 ensure_schedule 负责——异步生成一次后，后续读缓存固定。
+    """
+    import asyncio
+
+    async def _go():
+        a = await schedule.ensure_schedule(uid)
+        b = await schedule.ensure_schedule(uid)
+        return a, b
+
+    a, b = asyncio.run(_go())
     assert a == b
 
 

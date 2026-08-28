@@ -413,8 +413,10 @@ async def handle_schedule(event: PrivateMessageEvent):
     uid = str(event.user_id)
     try:
         from core.config import config
-        from core.schedule import describe as schedule_describe
+        from core.schedule import describe as schedule_describe, ensure_schedule
 
+        # 优先让 LLM 生成当日日程（失败自动退回规则模板）
+        await ensure_schedule(uid, city=config.mood_city)
         await schedule_cmd.finish(Message(schedule_describe(uid, city=config.mood_city)))
     except Exception:
         logger.exception("[日程] 查询失败")

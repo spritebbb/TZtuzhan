@@ -251,6 +251,15 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
         search_hits = web_search(text)
 
     # 4) 组装 prompt
+    # 4.0) 确保今日日程已由 LLM 生成（LLM 优先，规则兜底；同一天缓存）
+    try:
+        from .config import config as _config
+        from .schedule import ensure_schedule
+
+        await ensure_schedule(user_id, city=_config.mood_city)
+    except Exception:
+        logger.exception("[pipeline] 日程生成失败（不影响回复）")
+
     system = build_system_prompt(
         stage=affection.stage_of(user["affection"]),
         address=pref,

@@ -181,6 +181,16 @@ async def send_proactive_now(bot, user_id: str) -> bool:
 
                 sticker = get_recent_sticker(user_id)
                 if sticker:
+                    # 配一句自然话，不让表情包显得突兀
+                    try:
+                        from .speak import with_sticker
+
+                        talk = await with_sticker("菟菚想起你了")
+                        if talk:
+                            await asyncio.sleep(config.send_interval)
+                            await _send_with_retry(bot, user_id, talk)
+                    except Exception:
+                        logger.warning("[主动] 表情话术失败（不影响发图）")
                     await asyncio.sleep(config.send_interval)
                     await _send_with_retry(
                         bot, user_id, Message(MessageSegment.image(file=sticker))

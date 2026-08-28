@@ -75,7 +75,14 @@ async def handle_draw(event: PrivateMessageEvent):
     if not prompt:
         await draw_cmd.finish(Message("想让我画什么呀？说个画面给我，比如：画 一只趴在窗台上的猫"))
         return
-    await draw_cmd.send(Message("嗯……我画给你，稍等一下呀～"))
+    # 发图前用多样化话术递图（失败回退固定句）
+    try:
+        from core.speak import before_draw
+
+        pre = await before_draw()
+    except Exception:
+        pre = ""
+    await draw_cmd.send(Message(pre or "嗯……我画给你，稍等一下呀～"))
     # 在 prompt 里强化菟菚的风格：温暖、治愈、在线感
     enhanced = f"温暖治愈系插画风格，{prompt}，色调柔和，可爱，有生活气息"
     path = await generate_image(enhanced)
@@ -170,13 +177,33 @@ async def _debounce_flush(user_id: str) -> None:
         # 发送回复（用 bot API 直接发，不依赖 matcher）
         await _send_reply_to(bot, user_id, reply)
         logger.info("[去抖] {} 回复完成：{}", user_id, reply[:30])
-        # 副动作：收藏表情包（纯图才收藏）
+        # 副动作：收到纯图 → 先回应一句，再收藏回发（配一句自然的话）
         has_text = bool(items[0]["text"].strip()) or any(it["text"].strip() for it in items)
         if incoming_images and not has_text:
+            # ① 收到表情包先回应（用视觉描述生成，失败回退固定话）
+            try:
+                from core.speak import on_receive_img
+
+                first_url = incoming_images[0]
+                img_desc = await describe_image(first_url) if first_url else ""
+                ack = await on_receive_img(img_desc)
+                if ack:
+                    await _send_reply_to(bot, user_id, ack)
+            except Exception:
+                logger.exception("[话术] 收到图片回应失败")
+            # 收藏 + 回发（配一句自然话再发图）
             for url in incoming_images:
                 await collect_sticker(user_id, url)
             sticker = pick_sticker(user_id, "", 1)
             if sticker:
+                try:
+                    from core.speak import with_sticker
+
+                    talk = await with_sticker("对方刚发来一张表情包")
+                    if talk:
+                        await _send_reply_to(bot, user_id, talk)
+                except Exception:
+                    logger.exception("[话术] 发表情包话术失败")
                 await _send_sticker_to(bot, user_id, sticker[0])
         # 对话驱动生图：用户回应"想看"
         try:
@@ -185,8 +212,15 @@ async def _debounce_flush(user_id: str) -> None:
             if want_to_see(merged):
                 scene = await extract_scene(user_id)
                 if scene:
+                    # 生图前用多样化话术递图
+                    try:
+                        from core.speak import before_draw
+
+                        pre = await before_draw()
+                    except Exception:
+                        pre = ""
                     await bot.send_private_msg(
-                        user_id=int(user_id), message=Message("给你看～我画给你呀")
+                        user_id=int(user_id), message=Message(pre or "给你看～我画给你呀")
                     )
                     path = await generate_image(scene)
                     if path:

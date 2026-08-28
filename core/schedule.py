@@ -348,7 +348,7 @@ def _stage_of(user_id: str) -> str:
 
 def period_for_hour(hour: int, stage: str | None = None) -> str:
     """当前小时（0-23）→ 所属日程时段名。"""
-    table = _PERIOD_MOOD_BY_STAGE.get(stage or "", _PERIOD_MOOD_BY_STAGE["恋人"])
+    table = _PERIOD_MOOD_BY_STAGE.get(stage or _DEFAULT_STAGE, _PERIOD_MOOD_BY_STAGE[_DEFAULT_STAGE])
     for start, end, _, name in table:
         if start <= hour < end:
             return name

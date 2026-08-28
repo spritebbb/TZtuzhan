@@ -253,7 +253,7 @@ class UserDB:
 
     def messages_between(self, user_id: str, start: date, end: date):
         return self.conn.execute(
-            "SELECT role, content, ts FROM messages WHERE user_id = ? "
+            "SELECT id, role, content, ts FROM messages WHERE user_id = ? "
             "AND date(ts) BETWEEN ? AND ? ORDER BY id",
             (user_id, start.isoformat(), end.isoformat()),
         ).fetchall()

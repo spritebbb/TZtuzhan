@@ -91,7 +91,8 @@ async def extract_facts(user_id: str, day: date | None = None) -> None:
         if not rows:
             return
         transcript = "\n".join(f"{r['role']}: {r['content']}" for r in rows[-60:])
-        done = db.max_message_id(user_id)
+        # 用该日最后一条消息的 id 推进游标，避免吞掉今天的新消息
+        done = rows[-1]["id"] if rows else 0
     else:
         rows = db.messages_after(user_id, last_id, 60)
         if len(rows) < 8:  # 太少不值得提炼，省一次调用

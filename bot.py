@@ -22,6 +22,11 @@ async def _start_background_tasks():
     from core.memes import meme_refresh_loop
     from core.proactive import run_scheduler
 
+    # 掉线检测：注册 bot 连接生命周期钩子（断开→提醒，重连→清除标记）
+    from core.offline_alert import setup as setup_offline_alert
+
+    setup_offline_alert()
+
     asyncio.create_task(run_scheduler())
     # 热梗定时刷新：启动后立即刷一次，之后每小时刷（不依赖用户对话触发）
     asyncio.create_task(meme_refresh_loop(3600))

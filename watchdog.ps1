@@ -26,6 +26,7 @@ $Log = Join-Path $DataDir 'watchdog.log'
 $StateFile = Join-Path $DataDir 'watchdog_state.json'   # 守护脚本自身状态
 $BotPidFile = Join-Path $DataDir 'bot.pid'              # bot 主进程 pid（供外部查询/清理）
 $NapcatLauncher = Join-Path $Root 'Napcat\NapCat.Shell.Windows.Node\napcat\launcher.bat'
+$BotQQ = '<BOT_QQ>'   # bot QQ 号（快速登录用，凭据有效则免扫码自动登录）
 
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 
@@ -161,7 +162,7 @@ function Restart-Napcat {
     # 2) 等端口释放
     Start-Sleep -Seconds 3
 
-    # 3) 拉起 launcher（NapCat 自动登录已登录的 QQ）
+    # 3) 拉起 launcher（-q 快速登录：凭据有效则自动登录，失效才需扫码一次）
     Start-Napcat
 
     # 4) 等 NapCat 起来并等 bot 重连
@@ -175,10 +176,10 @@ function Start-Napcat {
         Log "[napcat] ✗ 找不到 launcher.bat" 'Red'
         return
     }
-    Log '[napcat] 拉起 launcher.bat（需管理员，可能弹 UAC）...' 'Yellow'
+    Log "[napcat] 拉起 launcher.bat -q $BotQQ（快速登录，需管理员，可能弹 UAC）..." 'Yellow'
     try {
         Start-Process -FilePath 'cmd.exe' `
-            -ArgumentList "/c chcp 65001 >nul & cd /d `"$(Split-Path $NapcatLauncher)`" & launcher.bat" `
+            -ArgumentList "/c chcp 65001 >nul & cd /d `"$(Split-Path $NapcatLauncher)`" & launcher.bat -q $BotQQ" `
             -WorkingDirectory (Split-Path $NapcatLauncher)
     } catch {
         Log "[napcat] ✗ 启动失败: $($_.Exception.Message)" 'Red'

@@ -268,7 +268,11 @@ class UserDB:
         return cur.lastrowid
 
     def search_long_memory(self, user_id: str, query: str, top_k: int):
-        """v1 关键词检索：按中文字符二元组重叠打分，取 top_k。"""
+        """v1 关键词检索：按中文字符二元组重叠打分，取 top_k。
+
+        重叠阈值与 search_long_memory_multi 一致：短查询（≤2 二元组）要求 2 个命中，
+        长查询放宽到 1 个（口语措辞差异容忍），噪声由调用方重排过滤。
+        """
         q_bigrams = _bigrams(query)
         if not q_bigrams:
             return []
@@ -278,8 +282,7 @@ class UserDB:
             (user_id,),
         ).fetchall()
         scored = []
-        # 短查询（如 2 字称呼）至少 1 个二元组命中即可，长查询要求 2 个
-        min_overlap = min(2, len(q_bigrams))
+        min_overlap = 1 if len(q_bigrams) != 2 else 2
         for r in rows:
             content_bigrams = _bigrams(r["content"])
             overlap = len(q_bigrams & content_bigrams)
@@ -293,13 +296,19 @@ class UserDB:
 
         语义检索的落地方式：LLM 把用户问题扩展成若干关键词/短语，逐一检索，
         比单条原文命中更稳（原句里的口语词常常和存档时的措辞对不上）。
+
+        重叠阈值：短查询（≤2 个二元组，如"下雨天"）要求 2 个二元组全命中；
+        长查询（整句/长短语）放宽到 1 个，避免因口语措辞差异漏检——放宽带来的
+        噪声由调用方后续的 TF-IDF 重排过滤。
         """
         scored: dict[int, tuple[int, str]] = {}
         for query in queries:
             q_bigrams = _bigrams(query)
             if not q_bigrams:
                 continue
-            min_overlap = min(2, len(q_bigrams))
+            # len==1（2字查询）只能要求1个重叠；len==2（3字）要求2个；
+            # len>=3（整句/长短语）放宽到1个（口语措辞差异容忍，噪声由重排过滤）
+            min_overlap = 1 if len(q_bigrams) != 2 else 2
             rows = self.conn.execute(
                 "SELECT id, content, ts FROM long_memory WHERE user_id = ? "
                 "ORDER BY id DESC LIMIT 500",
@@ -341,7 +350,11 @@ class UserDB:
         return cur.lastrowid
 
     def search_facts(self, user_id: str, query: str, top_k: int):
-        """按关键词（二元组）检索事实，取 top_k。"""
+        """按关键词（二元组）检索事实，取 top_k。
+
+        重叠阈值与 long_memory 检索一致：短查询（≤2 二元组）要求 2 个命中，
+        长查询放宽到 1 个（口语措辞差异容忍）。
+        """
         q_bigrams = _bigrams(query)
         if not q_bigrams:
             return []
@@ -349,7 +362,7 @@ class UserDB:
             "SELECT content FROM facts WHERE user_id = ? ORDER BY id DESC LIMIT 500",
             (user_id,),
         ).fetchall()
-        min_overlap = min(2, len(q_bigrams))
+        min_overlap = 1 if len(q_bigrams) != 2 else 2
         scored = []
         for r in rows:
             content_bigrams = _bigrams(r["content"])

@@ -60,3 +60,34 @@ def test_vector_store_embed_dims():
     vec = embed("测试一下embedding")
     assert vec is not None
     assert len(vec) == 1024
+
+
+def test_recall_includes_original_query():
+    """扩展词抽不准（含虚词）时，原句参与检索仍能召回目标记忆。"""
+    import asyncio
+    from unittest import mock
+
+    from core.memory import _recall_with_expansion
+    from core.userdb import db
+
+    uid = "pytest-recall-query"
+    db.ensure_user(uid)
+    for t in ("messages", "long_memory", "facts", "user_meta"):
+        db.conn.execute(f"DELETE FROM {t} WHERE user_id=?", (uid,))
+    db.conn.execute("DELETE FROM users WHERE user_id=?", (uid,))
+    db.conn.commit()
+    db.ensure_user(uid)
+
+    db.add_long_memory(uid, "用户说：我最喜欢下雨天窝在窗边看书")
+    # 模拟扩展词含虚词（旧 bug 场景：LLM 返回"喜欢什么天气"而非实体词）
+    with mock.patch("core.memory.expand_query") as m_expand:
+        m_expand.return_value = ["喜欢什么天气"]
+        hits = asyncio.run(_recall_with_expansion(uid, "你还记得我上次说喜欢什么天气吗"))
+
+    assert any("下雨天" in h for h in hits), f"原句兜底应召回下雨天记忆，实际={hits}"
+
+    # 清理
+    for t in ("messages", "long_memory", "facts", "user_meta"):
+        db.conn.execute(f"DELETE FROM {t} WHERE user_id=?", (uid,))
+    db.conn.execute("DELETE FROM users WHERE user_id=?", (uid,))
+    db.conn.commit()

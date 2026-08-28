@@ -48,7 +48,10 @@ async def expand_query(user_id: str, query: str, *, mock: bool = False) -> list[
     prompt = (
         "你是记忆检索助手。用户问了一个问题（可能是在回忆以前聊过的事）。"
         "请提取 2-6 个最适合去聊天记录里检索的『关键词/短语』，要具体（人名、物品、地点、事件、喜好、约定等），"
-        "不要疑问词、不要语气词、不要整句复述。只输出 JSON 数组字符串，如 [\"养猫\",\"猫粮\",\"布偶\"]，不要其他文字。\n"
+        "不要疑问词、不要语气词、不要整句复述。尤其注意：把问题里的『核心实体词』抽出来"
+        "（比如『你还记得我上次说喜欢什么天气吗』→『下雨天』『晴天』，而不是『什么天气』），"
+        "去掉『什么/怎么/哪/记得/上次/说』这类虚词和疑问词。只输出 JSON 数组字符串，"
+        "如 [\"养猫\",\"猫粮\",\"布偶\"]，不要其他文字。\n"
         f"用户的问题：{query}"
     )
     try:
@@ -212,6 +215,9 @@ async def recall_facts(user_id: str, query: str, *, mock: bool = False) -> list[
 
 async def _recall_with_expansion(user_id: str, query: str, *, mock: bool = False) -> list[str]:
     terms = await expand_query(user_id, query, mock=mock)
+    # 原句始终参与检索：扩展词可能抽不准（含虚词/未命中实体），原句 bigram 是可靠兜底
+    if query.strip() and query.strip() not in terms:
+        terms = [query.strip()] + terms
     # 先取全部候选（放宽 top_k），再用 TF-IDF 重排
     all_rows = db.search_long_memory_multi(user_id, terms, 20)
     candidates = [h["content"] for h in all_rows]
@@ -252,6 +258,9 @@ async def _recall_with_expansion(user_id: str, query: str, *, mock: bool = False
 
 async def _facts_with_expansion(user_id: str, query: str, *, mock: bool = False) -> list[str]:
     terms = await expand_query(user_id, query, mock=mock)
+    # 原句始终参与检索（同 _recall_with_expansion）
+    if query.strip() and query.strip() not in terms:
+        terms = [query.strip()] + terms
     candidates: list[str] = []
     for t in terms:
         for h in db.search_facts(user_id, t, 10):

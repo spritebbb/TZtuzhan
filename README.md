@@ -184,6 +184,29 @@ cd D:\DSH\TZtuzhan
 
 健康自检：`.\check-bot.ps1`；干净停止：`.\stop-bot.ps1`。
 
+**🛡️ 长期守护（推荐）**：用 `watchdog.ps1` 常驻后台，bot 崩溃/掉线自动拉起、防重复实例：
+
+```powershell
+.\watchdog.ps1                       # 常驻守护（每 15s 检查），Ctrl+C 退出
+.\watchdog.ps1 -RunOnce              # 自检一次就退出（适合定时任务）
+.\watchdog.ps1 -WithNapCat -Interval 20   # 连带守护 NapCat（UAC 提权拉起）
+```
+
+开机自启可注册为 Windows 计划任务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-watchdog.ps1          # 注册(登录自启 + 每2分钟兜底)
+powershell -ExecutionPolicy Bypass -File .\install-watchdog.ps1 -Remove  # 取消自启
+```
+
+或手动：
+```powershell
+schtasks /create /tn "TZtuzhanWatchdog" /tr "powershell -NoProfile -ExecutionPolicy Bypass -File D:\DSH\TZtuzhan\watchdog.ps1" /sc onlogon /rl highest
+schtasks /delete /tn "TZtuzhanWatchdog" /f   # 取消自启
+```
+
+watchdog 会把状态写到 `data/watchdog_state.json`，日志写到 `data/watchdog.log`。
+
 ### 6️⃣ 不接 QQ，先本地调试
 
 跳过 NapCat，直接在命令行体验人格与全流程：

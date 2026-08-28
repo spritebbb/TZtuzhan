@@ -221,6 +221,16 @@ async def on_message(user_id: str, text: str) -> None:
     user = db.ensure_user(user_id)
     today = date.today()
 
+    # ---- 基础聊天奖励：每次消息 +1，每日上限 10 次 ----
+    # 让日常聊天就能涨好感度，不依赖特定关键词或后台任务
+    from .userdb import kv_get as _kv_get, kv_set as _kv_set
+
+    chat_count_key = f"bonus:{today.isoformat()}:chat_count"
+    chat_count = int(_kv_get(user_id, chat_count_key) or "0")
+    if chat_count < 10:
+        db.update_affection(user_id, 1, "日常聊天")
+        _kv_set(user_id, chat_count_key, str(chat_count + 1))
+
     # ---- 跨天回滚：昨日每日总结 + 新一天首次聊天/陪伴 ----
     last_day = user["last_chat_date"]
     if last_day != today.isoformat():
@@ -230,15 +240,18 @@ async def on_message(user_id: str, text: str) -> None:
                 # 后台执行昨日 LLM 每日总结（不阻塞本轮回复）
                 from .daily import run_daily_batch  # 延迟导入避免循环
 
-                schedule(f"daily:{user_id}:{yesterday}", lambda: run_daily_batch(user_id, yesterday))
+                schedule(f"daily:{user_id}:{yesterday}", lambda uid=user_id, d=yesterday: run_daily_batch(uid, d))
                 db.set_chat_date(user_id, today.isoformat(), yesterday.isoformat())
             else:
                 db.set_chat_date(user_id, today.isoformat())
         else:
             db.set_chat_date(user_id, today.isoformat())
 
-        db.update_affection(user_id, DAY_FIRST_BONUS, "每日首次聊天")
-        db.update_affection(user_id, DAILY_COMPANION, "当日陪伴")
+        # 每日首次和陪伴奖励：用 kv_store 防重复
+        if not _daily_bonus_done(user_id, "first_chat"):
+            db.update_affection(user_id, DAY_FIRST_BONUS, "每日首次聊天")
+            db.update_affection(user_id, DAILY_COMPANION, "当日陪伴")
+            _mark_daily_bonus(user_id, "first_chat")
 
     # ---- 即时扣分（含每日上限检查）----
     if _spam_hit(user_id):

@@ -3,3 +3,4 @@ nonebot-adapter-onebot>=2.4.0
 openai>=1.40.0
 python-dotenv>=1.0.0
 ddgs>=9.0.0
+zhdate>=0.1

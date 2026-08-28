@@ -137,6 +137,10 @@ async def _generate_via_llm(user_id: str, *, city: str = "") -> list[dict] | Non
         if special
         else "普通的一天"
     )
+    # 今日中国节日（若有）一并告知，让日程带节日氛围
+    festivals = _today_festivals()
+    if festivals:
+        special_desc = f"{special_desc}；今天是{'、'.join(festivals)}"
     mood_label = ""
     try:
         from .mood import current_mood
@@ -264,6 +268,35 @@ _SPECIAL_MOOD_BONUS = {
     "other": 6,
 }
 
+# 中国节日心情加成（喜庆节日心情更好）
+_FESTIVAL_MOOD_BONUS = {
+    "春节": 10, "除夕": 10, "元宵节": 7, "端午节": 5, "中秋节": 8,
+    "七夕节": 8, "重阳节": 4, "清明节": -3, "中元节": -4,
+    "国庆节": 7, "劳动节": 5, "元旦": 6, "妇女节": 5, "教师节": 4,
+    "儿童节": 6, "植树节": 2, "建党节": 3, "建军节": 3, "情人节": 8,
+    "圣诞节": 7,
+}
+
+
+def _today_festivals() -> list[str]:
+    """今天是中国哪些节日（公历/农历），无则空列表。"""
+    try:
+        from .holidays import today_holidays
+
+        return today_holidays()
+    except Exception:
+        return []
+
+
+def _festival_bonus() -> int:
+    """今天节日带来的心情加成（取最大的那个）。"""
+    best = 0
+    for name in _today_festivals():
+        v = _FESTIVAL_MOOD_BONUS.get(name, 0)
+        if v > best:
+            best = v
+    return best
+
 
 def _stage_of(user_id: str) -> str:
     """读取用户好感度阶段（初识/熟悉/亲密/恋人），失败返回默认。"""
@@ -312,7 +345,7 @@ def schedule_mood_offset(user_id: str, *, city: str = "", hour: int | None = Non
             if start <= hour < end:
                 period_offset = offset
                 break
-        return bonus + period_offset
+        return bonus + period_offset + _festival_bonus()
     except Exception:
         return 0
 

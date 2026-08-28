@@ -324,6 +324,16 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
             }
         )
 
+    # 4.1.5) 中国节日：今天若是节日（公历/农历），自然融入对话
+    try:
+        from .holidays import holiday_prompt
+
+        festival = holiday_prompt(user_id)
+        if festival:
+            messages.append({"role": "system", "content": festival})
+    except Exception:
+        logger.exception("[pipeline] 节日注入失败")
+
     if compact_summary:
         messages.append(
             {

@@ -65,10 +65,8 @@ def build_system_prompt(
     """组装最终 system prompt = 人格 + 风格参考 + 当前用户状态注入。"""
     persona = load_persona()
 
-    # 网友风格参考（由 import_logs.py 从真实聊天记录生成；存在才注入）
-    style_ref = config.data_dir / "style_ref.txt"
-    if style_ref.exists():
-        persona += "\n\n" + style_ref.read_text(encoding="utf-8")
+    # （已停用）旧策略 style_ref.txt 会强制"平均每条4.7字、很少长篇大论"的短句节奏，
+    # 与新说话风格（长短结合、适中）冲突，故不再注入。风格由 persona 的「说话风格」主导。
 
     addr = address or "你"
     framing = _STAGE_FRAMING.get(stage, _STAGE_FRAMING["初识"])
@@ -101,5 +99,8 @@ def build_system_prompt(
         "也别用时间当开场白或找话题。对方聊什么就跟着聊什么，关心就落在对方真正说的事上。"
         "只有在**对方先说起**晚睡/熬夜/时间时，你才顺着回应一句，且轻轻带过、不展开、不重复。"
         "按以上阶段与关系行动。"
+        "另外特别注意：**日常对话不要主动提「晒太阳」「阳光」「吹风」这类词来填充日常描述**"
+        "（如「刚晒完太阳」「晒得懒洋洋的」），除非对方先说到天气或太阳；"
+        "菟丝子意象（藤蔓/缠绕/黏人）偶尔点缀可以，但晒太阳这类日常描述别说出口。"
     )
     return persona + dynamic

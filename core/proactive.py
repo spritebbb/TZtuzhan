@@ -8,6 +8,7 @@
 """
 import asyncio
 import random
+from .rhythm import jitter as _jitter
 from datetime import datetime
 
 from . import affection
@@ -156,7 +157,7 @@ async def _send_burst(bot, user_id: str, text: str) -> None:
         parts = [text.rstrip("。")]
     for i, p in enumerate(parts[:5]):
         if i > 0:
-            await asyncio.sleep(config.send_interval)
+            await asyncio.sleep(_jitter(config.send_interval))
         await _send_with_retry(bot, user_id, p)
 
 
@@ -190,11 +191,11 @@ async def send_proactive_now(bot, user_id: str) -> bool:
 
                         talk = await with_sticker("菟菚想起你了")
                         if talk:
-                            await asyncio.sleep(config.send_interval)
+                            await asyncio.sleep(_jitter(config.send_interval))
                             await _send_with_retry(bot, user_id, talk)
                     except Exception:
                         logger.warning("[主动] 表情话术失败（不影响发图）")
-                    await asyncio.sleep(config.send_interval)
+                    await asyncio.sleep(_jitter(config.send_interval))
                     await _send_with_retry(
                         bot, user_id, Message(MessageSegment.image(file=image_file(sticker)))
                     )

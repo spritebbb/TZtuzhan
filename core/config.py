@@ -38,6 +38,9 @@ class Config:
         # 消息去抖窗口（秒）：用户连发消息时，此时间内到达的都合并成一条整体处理。
         # 菟菚会等用户把话说完整（观察对方会不会继续打第二句/第三句），再精简成一句回应。
         self.debounce_seconds: float = float(os.getenv("DEBOUNCE_SECONDS", "4.0"))
+        # 回复延迟的随机抖动比例（0~1）：真人的反应时间不是固定的，加随机量避免规律性，
+        # 既是真人感，也能降低被风控识别为"固定节奏机器人"的概率。
+        self.delay_jitter: float = float(os.getenv("DELAY_JITTER", "0.4"))
 
         # 主动发消息（久别后菟菚主动找你）
         self.proactive_check_minutes: float = float(os.getenv("PROACTIVE_CHECK_MINUTES", "15"))

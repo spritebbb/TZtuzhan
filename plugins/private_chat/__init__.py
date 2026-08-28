@@ -17,6 +17,7 @@ from core.log import logger
 from core.message_build import _build_message, _maybe_append_emoji, image_file
 from core.pipeline import clean_address, process
 from core.proactive import send_proactive_now, set_active_user
+from core.rhythm import jitter as _jitter
 from core.search import last_error as search_last_error, web_search
 from core.sticker import collect as collect_sticker, pick as pick_sticker
 from core.userdb import (
@@ -191,7 +192,7 @@ async def _debounce_flush(user_id: str) -> None:
                     )
                     path = await generate_image(scene)
                     if path:
-                        await asyncio.sleep(config.think_delay * 0.7)
+                        await asyncio.sleep(_jitter(config.think_delay * 0.7))
                         await bot.send_private_msg(
                             user_id=int(user_id),
                             message=Message(MessageSegment.image(file=image_file(path))),
@@ -279,7 +280,7 @@ async def _send_sticker(event, sticker: dict) -> None:
         if not file_path or not Path(file_path).exists():
             return
         # 酝酿一下，像真人随手发
-        await asyncio.sleep(config.think_delay * 0.6)
+        await asyncio.sleep(_jitter(config.think_delay * 0.6))
         await private_msg.send(Message(MessageSegment.image(file=image_file(file_path))))
     except Exception:
         logger.exception("[表情回发] 发送失败：{}", sticker.get("file", ""))
@@ -291,7 +292,7 @@ async def _send_sticker_to(bot, user_id: str, sticker: dict) -> None:
         file_path = sticker.get("file")
         if not file_path or not Path(file_path).exists():
             return
-        await asyncio.sleep(config.think_delay * 0.6)
+        await asyncio.sleep(_jitter(config.think_delay * 0.6))
         await _bot_send_with_retry(bot, user_id, Message(MessageSegment.image(file=image_file(file_path))))
     except Exception:
         logger.exception("[表情回发] 发送失败：{}", sticker.get("file", ""))
@@ -319,12 +320,12 @@ async def _send_reply(reply: str) -> None:
     """
     chunks = _split_reply(reply)
     chunks = _maybe_append_emoji(chunks)
-    # 酝酿：基础延迟 + 每多一条多酝酿一会（但别太久）
-    await asyncio.sleep(config.think_delay + 0.5 * max(0, len(chunks) - 1))
+    # 酝酿：基础延迟（带随机抖动）+ 每多一条多酝酿一会（但别太久）
+    await asyncio.sleep(_jitter(config.think_delay) + 0.5 * max(0, len(chunks) - 1))
     for i, c in enumerate(chunks):
         if i > 0:
-            # 间隔随消息稍长一点 + 基础间隔，更像真人一条条打
-            delay = config.send_interval + 0.02 * len(c)
+            # 间隔随消息稍长一点 + 基础间隔（带抖动），更像真人一条条打
+            delay = _jitter(config.send_interval) + 0.02 * len(c)
             await asyncio.sleep(delay)
         await private_msg.send(_build_message(c))
 
@@ -333,10 +334,10 @@ async def _send_reply_to(bot, user_id: str, reply: str) -> None:
     """同 _send_reply，但用 bot API 直接发（不依赖 matcher 上下文，用于去抖 task）。"""
     chunks = _split_reply(reply)
     chunks = _maybe_append_emoji(chunks)
-    await asyncio.sleep(config.think_delay + 0.5 * max(0, len(chunks) - 1))
+    await asyncio.sleep(_jitter(config.think_delay) + 0.5 * max(0, len(chunks) - 1))
     for i, c in enumerate(chunks):
         if i > 0:
-            delay = config.send_interval + 0.02 * len(c)
+            delay = _jitter(config.send_interval) + 0.02 * len(c)
             await asyncio.sleep(delay)
         await _bot_send_with_retry(bot, user_id, _build_message(c))
 

@@ -126,7 +126,7 @@ async def handle_private(event: PrivateMessageEvent):
 
     # ③ 消息去抖：入队 + 重置计时器
     _pending_items.setdefault(user_id, []).append(
-        {"text": text, "extras": extras, "images": incoming_images, "event": event}
+        {"text": text, "extras": extras, "images": incoming_images}
     )
     task = _debounce_tasks.get(user_id)
     if task:
@@ -136,66 +136,78 @@ async def handle_private(event: PrivateMessageEvent):
 
 async def _debounce_flush(user_id: str) -> None:
     """去抖到点后：合并连发消息 → 走 pipeline → 发回复 → 副动作（收藏/生图）。"""
-    await asyncio.sleep(_DEBOUNCE_SECONDS)
-    items = _pending_items.pop(user_id, [])
-    _debounce_tasks.pop(user_id, None)
-    if not items:
-        return
-    bot = items[0]["event"].bot
-    # 合并连发消息
-    merged_parts: list[str] = []
-    incoming_images: list[str] = []
-    for it in items:
-        full = (it["text"] + " " + " ".join(it["extras"])).strip()
-        if full:
-            merged_parts.append(full)
-        incoming_images.extend(it["images"])
-    merged = "\n".join(merged_parts).strip() if merged_parts else ""
-    if not merged:
-        await bot.send_private_msg(user_id=int(user_id), message="……")
-        return
-    # 走 pipeline
     try:
-        reply = await process(user_id, merged)
-    except Exception as e:
-        reply = f"……藤蔓打结了\n（{e}）"
-    # 发送回复（用 bot API 直接发，不依赖 matcher）
-    await _send_reply_to(bot, user_id, reply)
-    # 副动作：收藏表情包（纯图才收藏）
-    has_text = bool(items[0]["text"].strip()) or any(it["text"].strip() for it in items)
-    if incoming_images and not has_text:
-        for url in incoming_images:
-            await collect_sticker(user_id, url)
-        sticker = pick_sticker(user_id, "", 1)
-        if sticker:
-            await _send_sticker_to(bot, user_id, sticker[0])
-    # 对话驱动生图：用户回应"想看"
-    try:
-        from core.draw_context import extract_scene, want_to_see
+        await asyncio.sleep(_DEBOUNCE_SECONDS)
+        items = _pending_items.pop(user_id, [])
+        _debounce_tasks.pop(user_id, None)
+        if not items:
+            return
+        # 在异步 task 里不能依赖 event.bot（context 已失效），用 get_bot() 取当前 bot
+        from nonebot import get_bot
 
-        if want_to_see(merged):
-            scene = await extract_scene(user_id)
-            if scene:
-                await bot.send_private_msg(
-                    user_id=int(user_id), message=Message("给你看～我画给你呀")
-                )
-                path = await generate_image(scene)
-                if path:
-                    await asyncio.sleep(config.think_delay * 0.7)
-                    await bot.send_private_msg(
-                        user_id=int(user_id),
-                        message=Message(MessageSegment.image(file=path)),
-                    )
-                else:
-                    from core.imagegen import last_error as img_last_error
+        bot = get_bot()
+        if bot is None:
+            logger.warning("[去抖] {} 的 bot 引用为空，跳过回复", user_id)
+            return
+        # 合并连发消息
+        merged_parts: list[str] = []
+        incoming_images: list[str] = []
+        for it in items:
+            full = (it["text"] + " " + " ".join(it["extras"])).strip()
+            if full:
+                merged_parts.append(full)
+            incoming_images.extend(it["images"])
+        merged = "\n".join(merged_parts).strip() if merged_parts else ""
+        if not merged:
+            await bot.send_private_msg(user_id=int(user_id), message="……")
+            return
+        # 走 pipeline
+        try:
+            reply = await process(user_id, merged)
+        except Exception as e:
+            logger.exception("[去抖] 处理消息失败：{}", merged[:30])
+            reply = f"……藤蔓打结了\n（{e}）"
+        # 发送回复（用 bot API 直接发，不依赖 matcher）
+        await _send_reply_to(bot, user_id, reply)
+        logger.info("[去抖] {} 回复完成：{}", user_id, reply[:30])
+        # 副动作：收藏表情包（纯图才收藏）
+        has_text = bool(items[0]["text"].strip()) or any(it["text"].strip() for it in items)
+        if incoming_images and not has_text:
+            for url in incoming_images:
+                await collect_sticker(user_id, url)
+            sticker = pick_sticker(user_id, "", 1)
+            if sticker:
+                await _send_sticker_to(bot, user_id, sticker[0])
+        # 对话驱动生图：用户回应"想看"
+        try:
+            from core.draw_context import extract_scene, want_to_see
 
-                    hint = img_last_error() or "生图服务没配好"
+            if want_to_see(merged):
+                scene = await extract_scene(user_id)
+                if scene:
                     await bot.send_private_msg(
-                        user_id=int(user_id),
-                        message=Message(f"……画面在我脑子里，就是画不出来（{hint}）"),
+                        user_id=int(user_id), message=Message("给你看～我画给你呀")
                     )
+                    path = await generate_image(scene)
+                    if path:
+                        await asyncio.sleep(config.think_delay * 0.7)
+                        await bot.send_private_msg(
+                            user_id=int(user_id),
+                            message=Message(MessageSegment.image(file=path)),
+                        )
+                    else:
+                        from core.imagegen import last_error as img_last_error
+
+                        hint = img_last_error() or "生图服务没配好"
+                        await bot.send_private_msg(
+                            user_id=int(user_id),
+                            message=Message(f"……画面在我脑子里，就是画不出来（{hint}）"),
+                        )
+        except Exception:
+            logger.exception("[生图] 对话生图失败")
     except Exception:
-        logger.exception("[生图] 对话生图失败")
+        logger.exception("[去抖] 回复 {} 失败", user_id)
+        return
 
 
 def _split_reply(reply: str, max_len: int = 26) -> list[str]:

@@ -168,7 +168,45 @@ async def _debounce_flush(user_id: str) -> None:
         if not merged:
             await bot.send_private_msg(user_id=int(user_id), message="……")
             return
-        # 走 pipeline
+
+        # 对话驱动生图：用户回应"想看" → 直接走生图，不跑 pipeline 主回复
+        # （避免 pipeline 复述场景 + before_draw 递图双重输出）
+        try:
+            from core.draw_context import extract_scene, want_to_see
+
+            if want_to_see(merged):
+                scene = await extract_scene(user_id)
+                if scene:
+                    try:
+                        from core.speak import before_draw
+
+                        pre = await before_draw()
+                    except Exception:
+                        pre = ""
+                    await bot.send_private_msg(
+                        user_id=int(user_id), message=Message(pre or "给你看～我画给你呀")
+                    )
+                    path = await generate_image(scene)
+                    if path:
+                        await asyncio.sleep(config.think_delay * 0.7)
+                        await bot.send_private_msg(
+                            user_id=int(user_id),
+                            message=Message(MessageSegment.image(file=path)),
+                        )
+                        logger.info("[生图] {} 对话生图完成", user_id)
+                    else:
+                        from core.imagegen import last_error as img_last_error
+
+                        hint = img_last_error() or "生图服务没配好"
+                        await bot.send_private_msg(
+                            user_id=int(user_id),
+                            message=Message(f"……画面在我脑子里，就是画不出来（{hint}）"),
+                        )
+                    return  # 已处理生图，不再走主回复
+        except Exception:
+            logger.exception("[生图] 对话生图失败（回退到主回复）")
+
+        # 走 pipeline 主回复
         try:
             reply = await process(user_id, merged)
         except Exception as e:
@@ -205,40 +243,6 @@ async def _debounce_flush(user_id: str) -> None:
                 except Exception:
                     logger.exception("[话术] 发表情包话术失败")
                 await _send_sticker_to(bot, user_id, sticker[0])
-        # 对话驱动生图：用户回应"想看"
-        try:
-            from core.draw_context import extract_scene, want_to_see
-
-            if want_to_see(merged):
-                scene = await extract_scene(user_id)
-                if scene:
-                    # 生图前用多样化话术递图
-                    try:
-                        from core.speak import before_draw
-
-                        pre = await before_draw()
-                    except Exception:
-                        pre = ""
-                    await bot.send_private_msg(
-                        user_id=int(user_id), message=Message(pre or "给你看～我画给你呀")
-                    )
-                    path = await generate_image(scene)
-                    if path:
-                        await asyncio.sleep(config.think_delay * 0.7)
-                        await bot.send_private_msg(
-                            user_id=int(user_id),
-                            message=Message(MessageSegment.image(file=path)),
-                        )
-                    else:
-                        from core.imagegen import last_error as img_last_error
-
-                        hint = img_last_error() or "生图服务没配好"
-                        await bot.send_private_msg(
-                            user_id=int(user_id),
-                            message=Message(f"……画面在我脑子里，就是画不出来（{hint}）"),
-                        )
-        except Exception:
-            logger.exception("[生图] 对话生图失败")
     except Exception:
         logger.exception("[去抖] 回复 {} 失败", user_id)
         return

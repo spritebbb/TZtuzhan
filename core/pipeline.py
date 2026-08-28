@@ -60,17 +60,60 @@ def clean_address(name: str) -> str:
 
 
 def _extract_reply(text: str) -> str:
-    """从「先思考后发言」的输出里提取【回复】段；无标记则整段当回复。"""
-    m = re.search(r"【回复】\s*(.*)", text, re.S)
-    return m.group(1).strip() if m else text.strip()
+    """从「先思考后发言」的输出里提取回复正文；无标记则裁剪掉思考段。
+
+    LLM 输出可能用不同的括号/标注来分隔思考与实际发言：
+      【思考】…【回复】…      〔思考〕…〔回复〕…      思考:…回复:…
+    优先找「回复」段（兼容多种写法，取最后一个避免思考段误命中）；
+    找不到则把「思考」段及其后的内容裁掉，只留最终要发的部分。
+    """
+    # 先尝试各类「回复」标注，取最后一个匹配（正文可能跨行）
+    for pat in (
+        r"【回复】\s*(.*)",
+        r"〔回复〕\s*(.*)",
+        r"\[回复\]\s*(.*)",
+        r"回复[：:]\s*(.*)",
+    ):
+        m = re.search(pat, text, re.S)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+    # 没有「回复」标注：如果有「思考」段且其与被标注的正文之间有清晰分隔，
+    # 直接用思考标记后面的内容；但若思考段吞噬了整段（无后续正文），保留全文。
+    thought_pat = re.compile(
+        r"(?:【思考】|〔思考〕|思考[：:])"
+        r"\s*(?P<body>[\s\S]*)",
+    )
+    m = thought_pat.search(text)
+    if m:
+        body = m.group("body").strip()
+        # 思考段后还有内容才算有正文；否则把整句当回复
+        if body:
+            return body
+    return text.strip()
 
 
-_PAREN_RE = re.compile(r"（[^）]*）|\([^)]*\)")
+_PAREN_RE = re.compile(r"（[^）]*）|\([^)]*\)", re.S)
 
 
 def strip_actions(text: str) -> str:
-    """移除模型输出里的任何括号旁白（动作/语气/屏幕提示），只留台词。"""
-    return _PAREN_RE.sub("", text).strip()
+    """移除模型输出里的任何括号旁白（动作/语气/屏幕提示），只留台词。
+
+    覆盖全角（）/半角()/六角〔〕；全角方头【】作为残留思考标记也一并清理。
+    """
+    # 若还有思考/回复标记对，先丢弃思考段、保留回复段（应对未经 _extract_reply 的情况）
+    for reply_pat in (r"【回复】\s*", r"〔回复〕\s*", r"\[回复\]\s*", r"回复[：:]\s*"):
+        m = re.search(reply_pat, text, re.S)
+        if m:
+            # 取最后一个回复标记之后的内容作为正文
+            tail = text[m.end():]
+            text = tail
+            break
+    # 剥掉一个完整思考段（若无回复标记，思考内容跟着正文也不理想，但保留正文优先）
+    text = re.sub(r"(?:【思考】|〔思考〕|思考[：:])\s*[^【】〔〕]*", "", text)
+    text = re.sub(r"〔[^〕]*〕", "", text)     # 六角旁白/思考残留
+    text = re.sub(r"【[^】]*】", "", text)     # 全角方头（思考/标注残留）
+    text = _PAREN_RE.sub("", text)             # 圆括号旁白
+    return text.strip()
 
 
 # 告别场景：用户说了这些，菟菚只需一句简短道别，不复读、不刷屏

@@ -66,3 +66,21 @@ def image_file(file_path: str) -> str:
     path = pathlib.Path(p).resolve()
     uri = path.as_uri()  # 形如 file:///D:/DSH/TZtuzhan/data/stickers/xx.gif
     return uri
+
+
+def retcode_1200(exc: Exception) -> bool:
+    """判断异常是否是 NapCat 的"消息体无法解析"(retcode=1200)。"""
+    return "1200" in str(exc) or "retcode=1200" in str(exc)
+
+
+def plain_text(text: str) -> str:
+    """把一段文本压成纯文本：剥掉所有 CQ 码/方括号标记/face 段/括号旁白，只留可发送文字。
+
+    用于发送失败"消息体无法解析"时的降级兜底：把内容压成 NapCat 一定认的纯文本重发。
+    """
+    import re as _re
+
+    t = _re.sub(r"\[[^\]]*\]", "", text)      # 剥掉 [CQ:xxx] / [face:N] 等
+    t = _re.sub(r"〔[^〕]*〕", "", t)          # 剥掉 〔旁白〕
+    t = _re.sub(r"【[^】]*】", "", t)          # 剥掉 【旁白】
+    return t.strip()

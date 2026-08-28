@@ -312,6 +312,20 @@ async def _bot_send_with_retry(bot, user_id: str, message, retries: int = 2) -> 
     raise last_exc
 
 
+def retcode_1200(exc: Exception) -> bool:
+    """判断异常是否是 NapCat 的"消息体无法解析"(retcode=1200)。"""
+    from core.message_build import retcode_1200 as _r
+
+    return _r(exc)
+
+
+def _plain_text(text: str) -> str:
+    """把一段文本压成纯文本：剥掉所有 CQ 码/方括号标记/face 段，只留可发送的文字。"""
+    from core.message_build import plain_text
+
+    return plain_text(text)
+
+
 async def _send_reply(reply: str) -> None:
     """像网友发消息一样，把回复拆成多条短消息，带间隔依次发送。
 
@@ -334,12 +348,25 @@ async def _send_reply_to(bot, user_id: str, reply: str) -> None:
     """同 _send_reply，但用 bot API 直接发（不依赖 matcher 上下文，用于去抖 task）。"""
     chunks = _split_reply(reply)
     chunks = _maybe_append_emoji(chunks)
+    # 调试：记录每条待发 chunk 的原始内容（排查"消息体无法解析"）
+    logger.debug("[发送] {} 待发 {} 条：{}", user_id, len(chunks), [repr(c) for c in chunks])
     await asyncio.sleep(_jitter(config.think_delay) + 0.5 * max(0, len(chunks) - 1))
     for i, c in enumerate(chunks):
         if i > 0:
             delay = _jitter(config.send_interval) + 0.02 * len(c)
             await asyncio.sleep(delay)
-        await _bot_send_with_retry(bot, user_id, _build_message(c))
+        try:
+            await _bot_send_with_retry(bot, user_id, _build_message(c))
+        except Exception as e:
+            # 兜底：若因"消息体无法解析"失败，把该条压成纯文本（剥掉一切 CQ 段/标记）重发一次
+            if "消息体无法解析" in str(e) or retcode_1200(e):
+                logger.warning("[发送] {} 第{}条被NapCat拒绝，降级为纯文本重试：{!r}", user_id, i + 1, c)
+                plain = _plain_text(c)
+                if plain:
+                    await _bot_send_with_retry(bot, user_id, MessageSegment.text(plain))
+                    continue
+            logger.error("[发送] {} 第{}条发送失败：{}\n  chunk={!r}", user_id, i + 1, e, c)
+            raise
 
 
 @set_address_cmd.handle()

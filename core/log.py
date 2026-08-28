@@ -12,7 +12,7 @@ logger.add(
     rotation="10 MB",
     retention=7,
     encoding="utf-8",
-    level="INFO",
+    level="DEBUG",  # DEBUG 便于排查发送内容；稳定后可改回 INFO
     enqueue=True,  # 线程安全：后台任务与主循环都可能写日志
 )
 logger.add(sys.stderr, level="INFO")

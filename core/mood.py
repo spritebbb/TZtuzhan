@@ -117,18 +117,36 @@ def _weather_via_wttr(city: str) -> str | None:
         req = urllib.request.Request(url, headers={"User-Agent": "curl/7.68"})
         with urllib.request.urlopen(req, timeout=8) as resp:
             line = resp.read().decode("utf-8", "ignore")
-        # 形如 "北京: ⛅ 多云, +25°C"
+        # 形如 "北京: ⛅ 多云, +25°C" 或 "襄阳: 🌦️  +31°C"
         for kw in _WEATHER_BASE:
             if kw in line:
                 return kw
-        if "☀" in line or "Sunny" in line or "晴" in line:
+        # emoji 映射（wttr.in 常用）
+        emoji_map = {
+            "☀": "晴", "🌞": "晴", "🌤": "晴", "🌣": "晴",
+            "⛅": "多云", "🌥": "多云", "☁": "多云", "🌦": "雨",
+            "🌧": "雨", "⛈": "雷", "🌨": "雪", "❄": "雪", "🌬": "风",
+            "🌫": "雾", "🌪": "风", "☔": "雨",
+        }
+        for emoji, kw in emoji_map.items():
+            if emoji in line:
+                return kw
+        # 英文关键词兜底
+        low = line.lower()
+        if "sunny" in low or "clear" in low:
             return "晴"
-        if "☁" in line or "Cloud" in line or "云" in line:
+        if "cloud" in low or "overcast" in low:
             return "多云"
-        if "雨" in line or "Rain" in line:
+        if "rain" in low or "drizzle" in low or "shower" in low:
             return "雨"
-        if "雪" in line or "Snow" in line:
+        if "snow" in low or "blizzard" in low:
             return "雪"
+        if "thunder" in low or "storm" in low:
+            return "雷"
+        if "fog" in low or "mist" in low:
+            return "雾"
+        if "wind" in low:
+            return "风"
     except Exception:
         pass
     return None

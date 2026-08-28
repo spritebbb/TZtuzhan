@@ -269,11 +269,23 @@ async def _send_sticker_to(bot, user_id: str, sticker: dict) -> None:
         if not file_path or not Path(file_path).exists():
             return
         await asyncio.sleep(config.think_delay * 0.6)
-        await bot.send_private_msg(
-            user_id=int(user_id), message=Message(MessageSegment.image(file=file_path))
-        )
+        await _bot_send_with_retry(bot, user_id, Message(MessageSegment.image(file=file_path)))
     except Exception:
         logger.exception("[表情回发] 发送失败：{}", sticker.get("file", ""))
+
+
+async def _bot_send_with_retry(bot, user_id: str, message, retries: int = 2) -> None:
+    """用 bot API 发私聊消息，失败重试（指数退避）；全部失败抛异常。"""
+    last_exc: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            await bot.send_private_msg(user_id=int(user_id), message=message)
+            return
+        except Exception as e:
+            last_exc = e
+            if attempt < retries:
+                await asyncio.sleep(1.0 * (2**attempt))
+    raise last_exc
 
 
 async def _send_reply(reply: str) -> None:
@@ -303,7 +315,7 @@ async def _send_reply_to(bot, user_id: str, reply: str) -> None:
         if i > 0:
             delay = config.send_interval + 0.02 * len(c)
             await asyncio.sleep(delay)
-        await bot.send_private_msg(user_id=int(user_id), message=_build_message(c))
+        await _bot_send_with_retry(bot, user_id, _build_message(c))
 
 
 @set_address_cmd.handle()

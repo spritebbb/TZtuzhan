@@ -128,6 +128,24 @@ async def proactive_message(user_id: str) -> str:
     return strip_actions(_extract_reply(raw))
 
 
+# 发送重试：QQ 网络抖动时补发，避免主动消息丢失
+_SEND_MAX_RETRIES = 2
+
+
+async def _send_with_retry(bot, user_id: str, message) -> None:
+    """发送一条私聊消息，失败重试（指数退避），全部失败抛异常。"""
+    last_exc: Exception | None = None
+    for attempt in range(_SEND_MAX_RETRIES + 1):
+        try:
+            await bot.send_private_msg(user_id=int(user_id), message=message)
+            return
+        except Exception as e:
+            last_exc = e
+            if attempt < _SEND_MAX_RETRIES:
+                await asyncio.sleep(1.0 * (2**attempt))
+    raise last_exc
+
+
 async def _send_burst(bot, user_id: str, text: str) -> None:
     """像网友一样把主动消息拆成几条短消息发送（也不带句号）。"""
     parts = [p.strip().rstrip("。").strip() or p.strip() for p in text.split("\n") if p.strip()]
@@ -136,7 +154,7 @@ async def _send_burst(bot, user_id: str, text: str) -> None:
     for i, p in enumerate(parts[:5]):
         if i > 0:
             await asyncio.sleep(config.send_interval)
-        await bot.send_private_msg(user_id=int(user_id), message=p)
+        await _send_with_retry(bot, user_id, p)
 
 
 async def send_proactive_now(bot, user_id: str) -> bool:
@@ -164,7 +182,9 @@ async def send_proactive_now(bot, user_id: str) -> bool:
                 sticker = get_recent_sticker(user_id)
                 if sticker:
                     await asyncio.sleep(config.send_interval)
-                    await bot.send_private_msg(user_id=int(user_id), message=Message(MessageSegment.image(file=sticker)))
+                    await _send_with_retry(
+                        bot, user_id, Message(MessageSegment.image(file=sticker))
+                    )
         except Exception:
             logger.warning("[主动] 表情包推荐失败（不影响主动消息）")
         return True
@@ -192,12 +212,14 @@ async def run_scheduler() -> None:
 
     - ⑨ 支持多个 PROACTIVE_USER_ID（逗号分隔）
     - ④ 频率控制：对方刚回复后进入冷静期不打扰；检查间隔带随机抖动避免死板节奏
+    - ④ 同日去重：一天内对同一用户只主动一次（避免多次打扰）
     """
     while True:
         # ④ 随机抖动：在基准间隔上 ±30%，避免"每 15 分钟整点"的机械感
         base = config.proactive_check_minutes * 60
         await asyncio.sleep(base * random.uniform(0.7, 1.3))
 
+        today = datetime.now().date().isoformat()
         for user_id in _target_user_ids():
             age = _age_hours(db.last_message_ts(user_id))
             if age is None or age < config.proactive_idle_hours:
@@ -205,6 +227,12 @@ async def run_scheduler() -> None:
 
             last_pro = db.get_last_proactive(user_id)
             if last_pro:
+                # 同日去重：今天已主动过 → 跳过
+                try:
+                    if last_pro[:10] == today:
+                        continue
+                except Exception:
+                    pass
                 hours_since = _age_hours(last_pro)
                 if hours_since is not None and hours_since < _stage_cooldown_hours(user_id):
                     continue

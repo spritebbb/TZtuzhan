@@ -31,6 +31,9 @@ def _vconn() -> sqlite3.Connection:
 
         conn = sqlite3.connect(config.data_dir / "bot.db")
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
@@ -144,3 +147,55 @@ def search(user_id: str, query: str, top_k: int = 5) -> list[tuple[int, float]]:
     except Exception:
         logger.warning("[向量] 检索失败：{}", query[:30])
         return []
+
+
+def indexed_count() -> int:
+    """当前向量索引总条数（用于判断是否需要回填）。"""
+    try:
+        conn = _vconn()
+        return conn.execute("SELECT COUNT(*) AS c FROM vec_memory").fetchone()["c"]
+    except Exception:
+        return 0
+
+
+def backfill(user_id: str = "", limit: int = 1000) -> int:
+    """给存量记忆补建向量索引（启动时后台执行）。
+
+    遍历 long_memory + facts 里还没有向量索引的记录，逐条建索引。
+    返回本次新建的条数。失败静默（下次启动再补）。
+    """
+    from .userdb import db
+
+    built = 0
+    try:
+        conn = _vconn()
+        for table in ("long_memory", "facts"):
+            rows = db.conn.execute(
+                f"SELECT id, user_id, content FROM {table} ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            for row in rows:
+                rid, uid, content = row["id"], row["user_id"], row["content"]
+                if user_id and uid != user_id:
+                    continue
+                # 与 index() 一致的 key 格式：{user_id}:{record_id}
+                key = f"{uid}:{rid}"
+                exists = conn.execute(
+                    "SELECT 1 FROM vec_memory WHERE id=?", (key,)
+                ).fetchone()
+                if exists:
+                    continue
+                vec = embed(content)
+                if not vec:
+                    continue
+                conn.execute(
+                    "INSERT INTO vec_memory (id, text_embedding) VALUES (?, ?)",
+                    (key, _vec_str(vec)),
+                )
+                built += 1
+        conn.commit()
+        if built:
+            logger.info("[向量] 存量回填完成，新增 {} 条索引", built)
+    except Exception:
+        logger.warning("[向量] 存量回填失败（下次启动重试）")
+    return built

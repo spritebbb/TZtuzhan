@@ -38,15 +38,23 @@ def _load_cached() -> dict | None:
         if not _cache().exists():
             return None
         data = json.loads(_cache().read_text(encoding="utf-8"))
-        # 校验有效期
-        ts = data.get("ts", "")
-        if ts:
-            fresh_until = datetime.fromisoformat(ts) + timedelta(hours=_REFRESH_HOURS)
-            if datetime.now() < fresh_until:
-                return data
-        return None  # 过期
+        if not isinstance(data, dict):
+            return None
+        return data  # 返回原始缓存（含 ts、memes），调用方自行判断是否过期
     except Exception:
         return None
+
+
+def _cache_is_fresh(data: dict) -> bool:
+    """返回缓存是否还在有效期内。"""
+    ts = data.get("ts", "")
+    if not ts:
+        return False
+    try:
+        fresh_until = datetime.fromisoformat(ts) + timedelta(hours=_REFRESH_HOURS)
+        return datetime.now() < fresh_until
+    except Exception:
+        return False
 
 
 def _save_cached(memes: list[dict]) -> None:
@@ -187,9 +195,13 @@ async def refresh_memes() -> list[dict]:
 
 
 def get_current_memes(force_refresh: bool = False) -> list[dict]:
-    """返回当前热梗；未缓存时返回空（由后台 refresh 填充）。"""
+    """返回当前热梗（含过期降级：刷新失败时用旧缓存，不让热梗突然消失）。
+
+    force_refresh=True 时即使缓存有效也强制后台刷新（仍返回当前可用清单）。
+    """
     data = _load_cached()
     if data and isinstance(data.get("memes"), list):
+        # 缓存过期但仍有旧数据 → 降级返回旧清单（后台会尝试刷新）
         return data["memes"]
     return []
 
@@ -200,7 +212,8 @@ def has_memes() -> bool:
 
 def schedule_refresh() -> None:
     """把热梗刷新放到后台（同 key 去重）；缓存过期才触发。"""
-    if _load_cached() is not None:
+    data = _load_cached()
+    if data is not None and _cache_is_fresh(data):
         return  # 缓存还有效，不刷
     schedule(memes_refresh_key(), refresh_memes)
 

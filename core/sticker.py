@@ -16,6 +16,8 @@ from .vision import describe_image, _guess_mime
 
 # 收藏上限：避免本地目录无限膨胀
 MAX_STICKERS = 200
+# 单张表情包下载上限 8MB（防超大图把磁盘/识图拖垮）
+_STICKER_MAX_BYTES = 8 * 1024 * 1024
 
 
 def _download(url: str, timeout: int = 20) -> bytes:
@@ -23,7 +25,10 @@ def _download(url: str, timeout: int = 20) -> bytes:
         return base64.b64decode(url.split(",", 1)[1])
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+        data = r.read(_STICKER_MAX_BYTES + 1)
+    if len(data) > _STICKER_MAX_BYTES:
+        raise ValueError("表情包过大，跳过收藏")
+    return data
 
 
 def _ext(url: str, data: bytes) -> str:

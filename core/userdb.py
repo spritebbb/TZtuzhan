@@ -94,6 +94,9 @@ class UserDB:
         config.data_dir.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(config.data_dir / "bot.db")
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode = WAL")
+        self.conn.execute("PRAGMA busy_timeout = 5000")
+        self.conn.execute("PRAGMA synchronous = NORMAL")
         self.conn.executescript(_SCHEMA)
         # 兼容旧库：补上 style_profile 列
         try:

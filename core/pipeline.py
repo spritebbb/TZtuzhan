@@ -472,6 +472,28 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
             ),
         }
     )
+
+    # 5.0) 话题锚定：明确"当前在聊什么"，避免回复被旧上下文带偏/跑题/串话题
+    try:
+        from .context import build_topic_system
+
+        # 取上下文里"对方（user）最近几句"用于判断话题切换；ctx 是 role/content 列表
+        recent_user_texts = [m["content"] for m in ctx if m.get("role") == "user"]
+        hint = build_topic_system(text, recent_user_texts, len(ctx))
+        if hint:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "关于当前这轮的上下文要点：\n" + hint
+                        + "\n注意：只把它当作把握方向用的提醒，回复仍要自然、口语化，"
+                        "不要复述这些提醒本身。"
+                    ),
+                }
+            )
+    except Exception:
+        logger.exception("[pipeline] 话题锚定失败（不影响回复）")
+
     raw = await chat(messages, mock=mock)
     reply = strip_actions(_extract_reply(raw))
     reply = trim_farewell(text, reply)

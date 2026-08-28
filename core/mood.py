@@ -185,26 +185,72 @@ def today_weather(city: str) -> tuple[str, int]:
     return "未知", base
 
 
-# ---- 心情状态机：连接天气基线 / 小时漂移 / 互动 / 好感度联动 ----
-def _baseline_for(city: str) -> int:
-    """当日心情基线（天气或时间段兜底）。"""
+# ---- 心情状态机：连接天气基线 / 日程情绪 / 小时漂移 / 互动 / 好感度联动 ----
+def _baseline_for(city: str, user_id: str = "") -> int:
+    """当日心情基线（天气 + 今日日程时段情绪 + 特殊日子加成）。"""
     _, base = today_weather(city)
-    return base
+    # 叠加上今日日程带来的情绪偏移（时段 + 特殊日子），让"日程影响心情"
+    if user_id:
+        try:
+            from .schedule import schedule_mood_offset
+
+            base += schedule_mood_offset(user_id, city=city)
+        except Exception:
+            pass
+    return max(0, min(100, base))
 
 
 def current_mood(user_id: str, *, city: str = "") -> tuple[int, str]:
-    """读取用户当前心情（应用小时漂移后），返回 (心情值, 状态名)。
+    """读取用户当前心情（应用小时漂移 + 日程时段切换校正 + 特殊日子加成后），返回 (心情值, 状态名)。
 
-    自动按上次更新时间做漂移回归，然后落库，保证下次读到的是最新值。
+    自动按上次更新时间做漂移回归；若跨了日程时段（如下午→晚上），
+    按时段情绪差即时校正心情；今日有特殊日子（生日/纪念日）且上次心情
+    更新不在今天时，一次性加上当日加成——让"日程影响心情"立即可感。
     """
     from .userdb import db
 
     mood, updated = db.get_mood(user_id)
-    baseline = _baseline_for(city) if city else 60
+    baseline = _baseline_for(city, user_id) if city else 60
+
+    # 特殊日子当日加成：今日有特殊日子且上次心情更新不是今天 → 一次性加上
+    if city:
+        try:
+            from .schedule import _SPECIAL_MOOD_BONUS, _special_kind
+
+            special = _special_kind(user_id)
+            bonus = _SPECIAL_MOOD_BONUS.get(special, 0) if special else 0
+            if bonus:
+                last_date = None
+                if updated:
+                    try:
+                        last_date = datetime.fromisoformat(updated).date()
+                    except Exception:
+                        pass
+                if last_date != date.today():
+                    mood = max(0, min(100, mood + bonus))
+                    db.set_mood(user_id, mood)
+        except Exception:
+            pass
+
     if updated:
         try:
             last = datetime.fromisoformat(updated)
-            hours = (datetime.now() - last).total_seconds() / 3600
+            now = datetime.now()
+            hours = (now - last).total_seconds() / 3600
+
+            # 日程时段切换校正：上次更新的时段 ≠ 现在时段 → 按情绪差即时调整
+            if city:
+                try:
+                    from .schedule import schedule_mood_offset
+
+                    old_off = schedule_mood_offset(user_id, city=city, hour=last.hour)
+                    new_off = schedule_mood_offset(user_id, city=city, hour=now.hour)
+                    if new_off != old_off:
+                        mood = max(0, min(100, mood + (new_off - old_off)))
+                        db.set_mood(user_id, mood)
+                except Exception:
+                    pass
+
             if hours > 0.25:  # 超过 15 分钟才漂移
                 mood = _drift(mood, baseline, hours)
                 db.set_mood(user_id, mood)

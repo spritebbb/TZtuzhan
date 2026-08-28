@@ -56,6 +56,58 @@ _SPECIAL_FLAVOR = {
     "other": "今天是个特别的日子，想做点跟平时不一样的事",
 }
 
+# ---- 时段情绪基调偏移：每个时段自带的心情底色（叠加在天气基线上）----
+# 键为起始小时（24h 制），区间为 [start, next_start)
+_PERIOD_MOOD = [
+    (5, 9, 0, "清晨"),      # 清晨：刚醒，慵懒平和
+    (9, 11, 2, "上午"),     # 上午：晒太阳发呆，安静舒适
+    (11, 14, 0, "中午"),    # 中午：懒洋洋
+    (14, 17, 1, "下午"),    # 下午：安静待着，偶尔想想你
+    (17, 19, 3, "傍晚"),    # 傍晚：听音乐，放松
+    (19, 23, 5, "晚上"),    # 晚上：想陪你，期待/黏人
+    (23, 24, 0, "深夜"),    # 深夜：困了，安静
+    (0, 5, 0, "凌晨"),      # 凌晨：睡着了/安静
+]
+
+# 特殊日子全天额外情绪加成（生日/纪念日当天会更开心）
+_SPECIAL_MOOD_BONUS = {
+    "birthday": 10,
+    "anniversary": 8,
+    "other": 6,
+}
+
+
+def period_for_hour(hour: int) -> str:
+    """当前小时（0-23）→ 所属日程时段名。"""
+    for start, end, _, name in _PERIOD_MOOD:
+        if start <= hour < end:
+            return name
+    return "晚上"
+
+
+def schedule_mood_offset(user_id: str, *, city: str = "", hour: int | None = None) -> int:
+    """今日日程带来的心情偏移：时段情绪 + 特殊日子加成。
+
+    用于 mood 模块把日程影响叠进心情基线。纯规则、失败返回 0，不影响对话。
+    """
+    if hour is None:
+        from datetime import datetime
+
+        hour = datetime.now().hour
+    try:
+        # 特殊日子加成（全天有效）
+        special = _special_kind(user_id)
+        bonus = _SPECIAL_MOOD_BONUS.get(special, 0) if special else 0
+        # 当前时段情绪
+        period_offset = 0
+        for start, end, offset, _name in _PERIOD_MOOD:
+            if start <= hour < end:
+                period_offset = offset
+                break
+        return bonus + period_offset
+    except Exception:
+        return 0
+
 
 def _weather_kind(city: str) -> str:
     """取当日天气关键词（用于调剂），无城市返回空。"""

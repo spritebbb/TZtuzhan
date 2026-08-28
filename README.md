@@ -6,7 +6,7 @@
 
 温柔 · 慵懒 · 病娇 · 爱晒太阳 · 爱黏人
 
-[![Version](https://img.shields.io/badge/version-v1.1.0-8a5cf6?style=flat-square)](https://github.com) [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org) [![NoneBot2](https://img.shields.io/badge/NoneBot2-2.x-4EC0D0?style=flat-square&logo=nonebot&logoColor=white)](https://nonebot.dev) [![License](https://img.shields.io/badge/license-MIT-important?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-v1.1.1-8a5cf6?style=flat-square)](https://github.com) [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org) [![NoneBot2](https://img.shields.io/badge/NoneBot2-2.x-4EC0D0?style=flat-square&logo=nonebot&logoColor=white)](https://nonebot.dev) [![License](https://img.shields.io/badge/license-MIT-important?style=flat-square)]()
 
 > 固定单人格 · QQ 私聊 · 完整记忆 · 好感度 · 心情 · 日程 · 节日 · 识图/生图 · 热梗 · 主动消息
 
@@ -22,7 +22,7 @@
 | 🎭 | 心情系统（天气/时段/互动） | 📅 | 今日日程（LLM 随机生成） |
 | 🎏 | 中国节日（公历+农历全覆盖） | 🖼️ | 识图 + 二次元生图 |
 | 🔥 | 网络热梗 · 联网搜索 | 💬 | 主动消息（久别找你） |
-| 🛡️ | 抗风控 · 掉线检测 | ✅ | 64 项自动化测试 |
+| 🛡️ | 抗风控 · 掉线检测 | ✅ | 70 项自动化测试 |
 
 ---
 
@@ -36,7 +36,7 @@ TZtuzhan/
 ├── .env.example            # 配置模板（复制为 .env 填写）
 ├── napcat-guide.md         # Windows NapCat 部署指引
 ├── persona-菟菚.md         # 🌿 人格源文件（唯一人格来源）
-├── tests/                  # pytest 自动化测试（64 项）
+├── tests/                  # pytest 自动化测试（70 项）
 ├── core/
 │   ├── config.py           # .env 配置加载
 │   ├── persona.py          # 人格加载 + 动态注入
@@ -67,9 +67,45 @@ TZtuzhan/
 
 ---
 
-## 🚀 快速开始
+## 🚀 部署指南（详细）
 
-### 1️⃣ 安装依赖（Python 3.10+）
+### 🧭 架构总览
+
+```
+  你的 QQ  ──私聊──▶  [bot QQ 号]
+                       ▲
+                       │ OneBot V11 正向 WebSocket (ws://127.0.0.1:3001)
+                       │
+                   ┌───┴───────────────┐
+                   │   NapCat (QQNT 协议层)  │  ← 负责收发 QQ 消息，独立进程
+                   └─────────┬─────────┘
+                             │
+                   ┌─────────▼─────────┐
+                   │  bot.py (NoneBot2) │  ← 本项目的核心逻辑进程
+                   │   · 人格 / 好感度  │
+                   │   · 心情 / 日程    │
+                   │   · 记忆 / 识图    │
+                   │   · 生图 / 搜索    │
+                   └────┬─────────┬────┘
+                        │         │
+        ┌───────────────▼───┐ ┌───▼──────────────┐
+        │ LLM API（对话/日程/ │ │ 辅助 API          │
+        │ 记忆/识图/生图…）    │ │ 搜索/天气/向量/热梗 │
+        └───────────────────┘ └──────────────────┘
+```
+
+> 一句话：**NapCat 管"收发 QQ 消息"，bot.py 管"怎么回话"**，两者通过 OneBot WS 协议连接。API key 全部在 `.env` 里配，bot 启动时读取。
+
+### 1️⃣ 系统要求
+
+| 项目 | 要求 |
+|---|---|
+| Python | **3.10+**（实测 3.14；Windows / macOS / Linux 均可） |
+| QQ | 一个**小号**（会被风控，别用主号）；NapCat 需要 QQNT（QQ 9.x 新版客户端） |
+| 网络 | 能访问 `api.deepseek.com` / `api.siliconflow.cn` 等 API（国内直连即可） |
+| 磁盘 | ≥ 300MB（venv + 依赖 + NapCat） |
+
+### 2️⃣ 安装依赖
 
 **一键脚本**（推荐，国内网络加 `-Mirror` 走清华镜像）：
 
@@ -78,7 +114,7 @@ cd D:\DSH\TZtuzhan
 powershell -ExecutionPolicy Bypass -File setup.ps1 -Mirror
 ```
 
-或手动执行：
+或手动执行（Python 3.14 的 ensurepip 问题用 `--without-pip` 规避）：
 
 ```powershell
 py -3.14 -m venv --without-pip .venv
@@ -86,47 +122,227 @@ py -3.14 -m pip --python .\.venv\Scripts\python.exe install --upgrade pip -i htt
 py -3.14 -m pip --python .\.venv\Scripts\python.exe install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-> 💡 如果本机 `py` 不可用，把 `py -3.14` 换成 `python`；`--without-pip` 方式兼容 Python 3.14 的 ensurepip 问题
+> 💡 如果本机 `py` 不可用，把 `py -3.14` 换成 `python`。
 
-### 2️⃣ 配置
+### 3️⃣ 配置 `.env`（API 全部在这里）
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-编辑 `.env`，填入：
+`.env` 是唯一需要填 API key 的地方，`bot.py` 启动时自动读取（`.env` 已加入 `.gitignore`，不会泄密）。
 
-| 变量 | 用途 |
-|---|---|
-| `LLM_BASE_URL / LLM_API_KEY / LLM_MODEL` | 对话模型（默认 DeepSeek `deepseek-chat`） |
-| `VISION_*` | 识图模型（DeepSeek 多模态） |
-| `IMAGE_API_KEY / IMAGE_MODEL` | 生图 + 向量记忆（SiliconFlow） |
-| `SEARCH_API_KEY` | 联网搜索（博查 API） |
-| `MOOD_CITY` | 🎭 心情系统的天气城市（如 `襄阳`） |
-| `PROACTIVE_USER_ID` | 可主动消息的 QQ 号，逗号分隔可多个 |
-| `THINK_DELAY / SEND_INTERVAL / DELAY_JITTER` | 🛡️ 回复节奏与抖动比例 |
+**最简可用配置（只要对话功能，只填这两个）：**
 
-不接 QQ 想先试人格 → 跳过第 3 步，直接跑调试模式：
+```
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_API_KEY=sk-你的deepseek-key
+```
+
+其余可选能力对应关系：
+
+| 能力 | 必需变量 | 不配置会怎样 |
+|---|---|---|
+| 💬 对话（核心） | `LLM_BASE_URL / LLM_API_KEY / LLM_MODEL` | 无法启动对话 |
+| 🖼️ 识图/表情包描述 | `VISION_BASE_URL / VISION_API_KEY / VISION_MODEL` | 识图关闭，收到图片当普通表情包处理 |
+| 🎨 生图 | `IMAGE_API_KEY`（`IMAGE_MODEL` 可选） | 生图命令 `/画` 不可用 |
+| 🔎 联网搜索 | `SEARCH_ENABLED / SEARCH_ENGINE / SEARCH_API_KEY` | 搜索关闭 |
+| 🧮 向量记忆 | 复用 `IMAGE_API_KEY` | 退化为纯关键词检索 |
+| 🎭 心情天气 | `MOOD_CITY` | 心情按时间段兜底，不查天气 |
+| 💬 主动消息 | `PROACTIVE_USER_ID` | 对最后说话的人发 |
+
+> 🔑 **API 具体怎么申请、各提供方怎么填，见下方「🔑 API 配置详解」章节。**
+
+### 4️⃣ 部署 NapCat（收发 QQ 消息）
+
+NapCat 是 QQNT 的协议实现，负责把 bot 接到 QQ。详细图文见 [`napcat-guide.md`](napcat-guide.md)，这里是最简流程：
+
+1. 下载安装 NapCat（本项目 Windows 实测 v4.18.19，需 QQNT 9.9.x 已登录一个小号）
+2. 启动 NapCat，配置 **OneBot 11 正向 WebSocket**，监听 `127.0.0.1:3001`
+3. 确认 `.env` 里 `ONEBOT_WS_URLS=["ws://127.0.0.1:3001"]` 与 NapCat 端口一致
+4. 用 bot 的 QQ 号登录 NapCat（首次扫码，之后自动登录）
+
+Windows 一键启动脚本：
 
 ```powershell
-.\.venv\Scripts\python.exe debug_cli.py --mock     # 模拟回复，跑通全流程
+cd D:\DSH\TZtuzhan
+.\start-all.bat        # 同时拉起 NapCat + bot（防重复实例，双窗口）
+```
+
+### 5️⃣ 启动 bot 并验证
+
+```powershell
+.\.venv\Scripts\python.exe bot.py
+```
+
+日志出现 `OneBot V11 | Bot <BOT_QQ> connected` 即连接成功。用**另一个 QQ** 私聊 bot 号：
+
+- 发「你好」→ 应得到慵懒的回应
+- 发 `/好感` → 显示好感度阶段
+- 发 `/日程` → 显示今日日程
+- 发 `/画 窗边的小橘猫` → 生图（需配置 `IMAGE_API_KEY`）
+
+健康自检：`.\check-bot.ps1`；干净停止：`.\stop-bot.ps1`。
+
+### 6️⃣ 不接 QQ，先本地调试
+
+跳过 NapCat，直接在命令行体验人格与全流程：
+
+```powershell
+.\.venv\Scripts\python.exe debug_cli.py --mock     # 模拟 LLM 回复，跑通全流程（不耗 API）
 .\.venv\Scripts\python.exe debug_cli.py            # 使用真实 LLM
 .\.venv\Scripts\python.exe debug_cli.py --reset    # 强制清除本地数据
 ```
 
 > 🎯 调试命令：`/好感度` 查看当前，`/好感度 80` 直接设置 0-100。设置到 75+ 自动进入「恋人」阶段。
 
-### 3️⃣ 部署 NapCat 并运行
+---
 
-1. 按 `napcat-guide.md` 部署 NapCat，开启正向 WebSocket（默认 `ws://127.0.0.1:3001`）
-2. 确认 `.env` 中 `ONEBOT_WS_URLS` 与 NapCat 端口一致
-3. 启动：
+## 🔑 API 配置详解
 
-```powershell
-.\.venv\Scripts\python.exe bot.py
+本节逐个说明 `.env` 里每个 API 的申请、提供方选择和填写格式。**所有 key 都以 `sk-` 开头，均为 OpenAI 兼容的 HTTP 接口**，bot 内部统一用 OpenAI SDK 调用，因此任意兼容端点都能换。
+
+### 💬 1. 对话 LLM（核心，必配）
+
+| 变量 | 说明 |
+|---|---|
+| `LLM_BASE_URL` | OpenAI 兼容端点根地址，**必须带 `/v1`** |
+| `LLM_API_KEY` | API 密钥 |
+| `LLM_MODEL` | 模型名 |
+| `LLM_TEMPERATURE` | 采样温度（0~2），默认 `0.8`，越高越放飞 |
+| `LLM_MAX_TOKENS` | 单次回复最大 token，默认 `500` |
+
+**备选提供方（任选其一，切注释即可）：**
+
+```ini
+# ① DeepSeek（默认，中文对话性价比高）
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_API_KEY=sk-你的deepseek-key
+LLM_MODEL=deepseek-chat
+
+# ② 硅基流动 SiliconFlow（国内，兼容多家开源模型）
+# LLM_BASE_URL=https://api.siliconflow.cn/v1
+# LLM_API_KEY=sk-你的siliconflow-key
+# LLM_MODEL=Qwen/Qwen3-32B
+
+# ③ 通义千问 DashScope（阿里）
+# LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+# LLM_API_KEY=sk-你的dashscope-key
+# LLM_MODEL=qwen-plus
+
+# ④ OpenAI 官方
+# LLM_BASE_URL=https://api.openai.com/v1
+# LLM_API_KEY=sk-你的openai-key
+# LLM_MODEL=gpt-4o-mini
 ```
 
-> 🪟 Windows 一键启动（防重复实例 + 双窗口）：双击 `start-all.bat`；健康自检 `check-bot.ps1`，干净停止 `stop-bot.ps1`
+> 更换提供方时：**注释掉当前三行，取消注释目标一组**。`LLM_BASE_URL` 结尾必须有 `/v1`。
+
+### 🖼️ 2. 识图（视觉模型，可选）
+
+收到用户发来的图片/表情包时，用视觉模型描述内容，菟菚才能"看懂"并自然回应。**不配置则识图关闭**，图片当普通表情包处理。
+
+| 变量 | 说明 |
+|---|---|
+| `VISION_BASE_URL` | 视觉模型 OpenAI 兼容端点 |
+| `VISION_API_KEY` | 密钥 |
+| `VISION_MODEL` | 支持图片输入的多模态模型名 |
+
+```ini
+# 例① 硅基流动 Qwen2.5-VL
+VISION_BASE_URL=https://api.siliconflow.cn/v1
+VISION_API_KEY=sk-你的siliconflow-key
+VISION_MODEL=Qwen/Qwen2.5-VL-72B-Instruct
+
+# 例② 通义千问 VL（DashScope）
+# VISION_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+# VISION_API_KEY=sk-你的dashscope-key
+# VISION_MODEL=qwen-vl-max
+```
+
+### 🎨 3. 图像生成（可选）
+
+`/画 xxx` 命令 + 对话驱动的"想看"生图。**不配置则生图功能关闭。**
+
+| 变量 | 说明 |
+|---|---|
+| `IMAGE_API_KEY` | SiliconFlow API key（**必须**，留空 = 生图关闭） |
+| `IMAGE_MODEL` | 文生图模型，默认 `Qwen/Qwen-Image`（日系二次元风格） |
+| `IMAGE_BASE_URL` | 默认 `https://api.siliconflow.cn/v1`，一般不用改 |
+
+```ini
+IMAGE_BASE_URL=https://api.siliconflow.cn/v1
+IMAGE_API_KEY=sk-你的siliconflow-key
+IMAGE_MODEL=Qwen/Qwen-Image
+```
+
+> 💡 `IMAGE_API_KEY` 同时被**向量记忆**复用（同用 SiliconFlow embedding），所以配了生图也就自动拥有了语义向量记忆。
+
+### 🧮 4. 向量记忆（可选，复用生图 key）
+
+用户"回忆"时，把问题扩展成关键词 + 用稠密向量检索长期记忆，同义表达也能召回。**用 `IMAGE_API_KEY`（SiliconFlow），无需单独配置**。`MEMORY_SEMANTIC=0` 可关闭退化为纯关键词检索。
+
+```ini
+MEMORY_SEMANTIC=1
+```
+
+### 🔎 5. 联网搜索（可选）
+
+对话中命中新闻/天气/价格等会自动检索。默认用 Bing（无需 key，国内可访问），填了博查 key 优先用博查（更稳定）。
+
+| 变量 | 说明 |
+|---|---|
+| `SEARCH_ENABLED` | `1` 开 / `0` 关，默认开 |
+| `SEARCH_ENGINE` | `bing`（默认）或 `ddg`（DuckDuckGo，国内可能不可用） |
+| `SEARCH_API_KEY` | 博查 AI key（可选，填了优先用博查） |
+
+```ini
+SEARCH_ENABLED=1
+SEARCH_ENGINE=bing
+# SEARCH_API_KEY=sk-你的博查key
+```
+
+### 🎭 6. 心情天气（可选）
+
+心情系统按当日天气设定基线（晴→心情好、雨→低落）。**`MOOD_CITY` 填城市名**（如 `北京`/`襄阳`），留空则按时间段兜底。
+
+```ini
+MOOD_CITY=北京
+```
+
+### ⏱️ 7. 回复节奏（抗风控，可选调优）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `DEBOUNCE_SECONDS` | `4.0` | 用户连发消息的合并窗口（秒），窗口内到达的都并成一句整体理解 |
+| `THINK_DELAY` | `2.0` | 收到消息后到发第一条回复的"酝酿"秒数 |
+| `SEND_INTERVAL` | `3.0` | 多条回复之间的发送间隔（秒） |
+| `DELAY_JITTER` | `0.4` | 上述延迟的随机抖动比例（0~1），避免固定节奏被风控识别 |
+
+### 💬 8. 主动消息（可选）
+
+久别后菟菚会主动找你。默认对"最后说话的人"发；也可指定白名单。
+
+```ini
+PROACTIVE_USER_ID=10001,10002        # 逗号分隔多个 QQ 号；留空 = 对最后说话的人发
+PROACTIVE_IDLE_HOURS=4               # 几小时不聊算"久别"，默认 4
+PROACTIVE_COOLDOWN_HOURS=8           # 两次主动之间的冷却，默认 8
+PROACTIVE_CHECK_MINUTES=15           # 调度检查间隔（分钟）
+```
+
+### 🧬 9. 人格文件
+
+```ini
+PERSONA_FILE=persona-菟菚.md
+```
+唯一人格来源，改这里即可换性格（详见 [`persona-菟菚.md`](persona-菟菚.md)）。
+
+### 🔌 10. OneBot / WS 连接
+
+```ini
+ONEBOT_WS_URLS=["ws://127.0.0.1:3001"]   # 与 NapCat 正向 WS 端口一致
+DRIVER=~aiohttp                           # 用 aiohttp driver 支持 WS 客户端
+```
 
 ---
 
@@ -214,7 +430,7 @@ Copy-Item .env.example .env
 - 📨 **发送重试 + 降级**：失败自动重试；"消息体无法解析"降级为纯文本重发
 - 🧊 **抗风控**：NapCat `o3HookMode=0` + 延迟随机抖动，模拟真人节奏
 - 🚨 **掉线检测**：NapCat/QQ 掉线自动检测（60s 去抖），QQ 提醒 + 本地通知
-- 🧪 **自动化测试**：pytest 覆盖 64 项
+- 🧪 **自动化测试**：pytest 覆盖 70 项
 
 ---
 

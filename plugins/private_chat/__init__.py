@@ -31,6 +31,7 @@ from core.vision import describe_image
 private_msg = on_message(priority=5, block=True)
 set_address_cmd = on_command("称呼", priority=4, block=True)
 aff_cmd = on_command("好感度", aliases={"好感", "aff"}, priority=4, block=True)
+mood_cmd = on_command("心情", aliases={"mood", "状态"}, priority=4, block=True)
 search_cmd = on_command("搜索", aliases={"搜"}, priority=4, block=True)
 proactive_cmd = on_command("主动", priority=4, block=True)
 dates_cmd = on_command("日子", aliases={"特殊日子", "纪念日"}, priority=4, block=True)
@@ -353,6 +354,27 @@ async def handle_set_address(event: PrivateMessageEvent):
         await set_address_cmd.finish(Message("这个称呼，我不喜欢呢……换一个吧。"))
     db.set_nickname(str(event.user_id), name)
     await set_address_cmd.finish(Message(f"好，以后就这么叫你：{name}"))
+
+
+@mood_cmd.handle()
+async def handle_mood(event: PrivateMessageEvent):
+    if not isinstance(event, PrivateMessageEvent):
+        return
+    uid = str(event.user_id)
+    try:
+        from core import mood as mood_mod
+        from core.config import config
+
+        text = _cmd_arg(event.get_plaintext(), "心情", "mood", "状态")
+        clean = text.strip("（）()[]【】。")
+        if clean and clean.isdigit():
+            # 调试：手动设置心情值
+            mood_mod.update_mood(uid, int(clean) - mood_mod.current_mood(uid, city=config.mood_city)[0], city=config.mood_city)
+            await mood_cmd.finish(Message("已设置 -> " + mood_mod.describe(uid, city=config.mood_city)))
+        await mood_cmd.finish(Message("当前 " + mood_mod.describe(uid, city=config.mood_city)))
+    except Exception:
+        logger.exception("[心情] 查询失败")
+        await mood_cmd.finish(Message("心情系统暂时没反应……过会儿再问我吧"))
 
 
 @aff_cmd.handle()

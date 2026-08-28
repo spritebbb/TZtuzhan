@@ -214,6 +214,7 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
         lover_confirm=bool(user["lover_confirm"]),
         first_chat=first_chat,
         affection=user["affection"],
+        user_id=user_id,
     )
     messages = [{"role": "system", "content": system}]
 

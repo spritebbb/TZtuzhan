@@ -76,6 +76,8 @@ async def proactive_message(user_id: str) -> str:
         address=user["nickname_pref"],
         lover_confirm=bool(user["lover_confirm"]),
         first_chat=not user["first_chat_done"],
+        affection=user["affection"],
+        user_id=user_id,
     )
     messages = [{"role": "system", "content": system}]
     messages.append(

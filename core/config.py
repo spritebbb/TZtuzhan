@@ -56,5 +56,8 @@ class Config:
         self.image_api_key: str = os.getenv("IMAGE_API_KEY", "").strip()
         self.image_model: str = os.getenv("IMAGE_MODEL", "Kwai-Kolors/Kolors").strip()
 
+        # 心情系统：天气城市（留空则按时间段兜底基线，不查天气）
+        self.mood_city: str = os.getenv("MOOD_CITY", "").strip()
+
 
 config = Config()

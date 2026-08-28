@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS users (
     last_chat_date  TEXT,
     last_batch_date TEXT,
     style_profile   TEXT,
-    last_proactive  TEXT
+    last_proactive  TEXT,
+    mood_value      INTEGER NOT NULL DEFAULT 60,
+    mood_updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,6 +109,15 @@ class UserDB:
             self.conn.execute("ALTER TABLE users ADD COLUMN last_proactive TEXT")
         except sqlite3.OperationalError:
             pass
+        # 心情系统字段（旧库迁移）
+        try:
+            self.conn.execute("ALTER TABLE users ADD COLUMN mood_value INTEGER NOT NULL DEFAULT 60")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            self.conn.execute("ALTER TABLE users ADD COLUMN mood_updated_at TEXT")
+        except sqlite3.OperationalError:
+            pass
         self.conn.commit()
 
     # ---- users ----
@@ -137,6 +148,24 @@ class UserDB:
     def set_nickname(self, user_id: str, name: str) -> None:
         self.conn.execute(
             "UPDATE users SET nickname_pref = ? WHERE user_id = ?", (name, user_id)
+        )
+        self.conn.commit()
+
+    def get_mood(self, user_id: str) -> tuple[int, str | None]:
+        """读取心情值与上次更新时间 (mood, updated_at)。"""
+        row = self.conn.execute(
+            "SELECT mood_value, mood_updated_at FROM users WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        if not row:
+            return 60, None
+        return row["mood_value"] or 60, row["mood_updated_at"]
+
+    def set_mood(self, user_id: str, mood: int) -> None:
+        """写入心情值（0-100）并更新时间戳。"""
+        mood = max(0, min(100, round(mood)))
+        self.conn.execute(
+            "UPDATE users SET mood_value = ?, mood_updated_at = ? WHERE user_id = ?",
+            (mood, datetime.now().isoformat(timespec="seconds"), user_id),
         )
         self.conn.commit()
 

@@ -221,6 +221,24 @@ async def on_message(user_id: str, text: str) -> None:
     user = db.ensure_user(user_id)
     today = date.today()
 
+    # ---- 心情更新：用户消息影响菟菚心情（有趣→升，冒犯→降）----
+    from .mood import on_user_message as _mood_on_msg, mood_bonus_multiplier
+    from .config import config
+
+    mood = _mood_on_msg(user_id, text, city=config.mood_city)
+    # 心情 → 好感度变动倍率（心情好加分多、扣分少；心情差反之）
+    mult = mood_bonus_multiplier(mood)
+
+    def _scaled(delta: int, reason: str) -> None:
+        """按心情倍率缩放好感度变动（正数×mult，负数用补偿倍率）。"""
+        if delta >= 0:
+            scaled = round(delta * mult)
+        else:
+            # 心情差时扣分更狠：低落(0.6) → 扣分×1.4；雀跃(1.5) → 扣分×0.5
+            scaled = round(delta * (2.0 - mult))
+        if scaled != 0:
+            db.update_affection(user_id, scaled, reason)
+
     # ---- 基础聊天奖励：每次消息 +1，每日上限 10 次 ----
     # 让日常聊天就能涨好感度，不依赖特定关键词或后台任务
     from .userdb import kv_get as _kv_get, kv_set as _kv_set
@@ -228,7 +246,7 @@ async def on_message(user_id: str, text: str) -> None:
     chat_count_key = f"bonus:{today.isoformat()}:chat_count"
     chat_count = int(_kv_get(user_id, chat_count_key) or "0")
     if chat_count < 10:
-        db.update_affection(user_id, 1, "日常聊天")
+        _scaled(1, "日常聊天")
         _kv_set(user_id, chat_count_key, str(chat_count + 1))
 
     # ---- 跨天回滚：昨日每日总结 + 新一天首次聊天/陪伴 ----
@@ -249,17 +267,17 @@ async def on_message(user_id: str, text: str) -> None:
 
         # 每日首次和陪伴奖励：用 kv_store 防重复
         if not _daily_bonus_done(user_id, "first_chat"):
-            db.update_affection(user_id, DAY_FIRST_BONUS, "每日首次聊天")
-            db.update_affection(user_id, DAILY_COMPANION, "当日陪伴")
+            _scaled(DAY_FIRST_BONUS, "每日首次聊天")
+            _scaled(DAILY_COMPANION, "当日陪伴")
             _mark_daily_bonus(user_id, "first_chat")
 
     # ---- 即时扣分（含每日上限检查）----
     if _spam_hit(user_id):
         if _penalty_ok(user_id, SPAM_PENALTY):
-            db.update_affection(user_id, SPAM_PENALTY, "刷屏")
+            _scaled(SPAM_PENALTY, "刷屏")
     if check_abuse(text):
         if _penalty_ok(user_id, ABUSE_PENALTY):
-            db.update_affection(user_id, ABUSE_PENALTY, "辱骂")
+            _scaled(ABUSE_PENALTY, "辱骂")
 
     # ---- 恋人达成（首次）→ 触发第二次称呼确认 ----
     user = db.get_user(user_id)

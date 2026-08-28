@@ -61,6 +61,7 @@ def build_system_prompt(
     lover_confirm: bool,
     first_chat: bool,
     affection: int = 0,
+    user_id: str = "",
 ) -> str:
     """组装最终 system prompt = 人格 + 风格参考 + 当前用户状态注入。"""
     persona = load_persona()
@@ -70,6 +71,21 @@ def build_system_prompt(
 
     addr = address or "你"
     framing = _STAGE_FRAMING.get(stage, _STAGE_FRAMING["初识"])
+
+    # 心情注入：让菟菚按当前心情说话（心情自然流露，别直接报数值）
+    mood_line = ""
+    if user_id:
+        try:
+            from . import mood as _mood
+            from .config import config
+
+            mood_val, mood_label = _mood.current_mood(user_id, city=config.mood_city)
+            mood_line = (
+                f"- 你当前的心情：{mood_label}（心情值 {mood_val}，这是你的内在状态，"
+                "要在语气/措辞里自然流露，不要直接说『我今天心情值XX』这类话）\n"
+            )
+        except Exception:
+            pass
 
     notes = []
     if first_chat and stage == "初识":
@@ -93,6 +109,7 @@ def build_system_prompt(
         f"- 当前好感度阶段：{stage}\n"
         f"- 你们的关系：{framing}\n"
         f"{bond_extra}"
+        f"{mood_line}"
         f"- 你对用户的称呼：{addr}\n"
         f"- 本轮注意：{note_text}\n"
         "特别提醒：**对方不提时间，你就绝口不提。** 不要主动说「这么晚/还不睡/该睡了/夜猫子/熬夜/注意时间」这类话，"

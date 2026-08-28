@@ -33,6 +33,7 @@ private_msg = on_message(priority=5, block=True)
 set_address_cmd = on_command("称呼", priority=4, block=True)
 aff_cmd = on_command("好感度", aliases={"好感", "aff"}, priority=4, block=True)
 mood_cmd = on_command("心情", aliases={"mood", "状态"}, priority=4, block=True)
+schedule_cmd = on_command("日程", aliases={"今日安排", "今天干啥", "日程表"}, priority=4, block=True)
 search_cmd = on_command("搜索", aliases={"搜"}, priority=4, block=True)
 proactive_cmd = on_command("主动", priority=4, block=True)
 dates_cmd = on_command("日子", aliases={"特殊日子", "纪念日"}, priority=4, block=True)
@@ -403,6 +404,21 @@ async def handle_mood(event: PrivateMessageEvent):
     except Exception:
         logger.exception("[心情] 查询失败")
         await mood_cmd.finish(Message("心情系统暂时没反应……过会儿再问我吧"))
+
+
+@schedule_cmd.handle()
+async def handle_schedule(event: PrivateMessageEvent):
+    if not isinstance(event, PrivateMessageEvent):
+        return
+    uid = str(event.user_id)
+    try:
+        from core.config import config
+        from core.schedule import describe as schedule_describe
+
+        await schedule_cmd.finish(Message(schedule_describe(uid, city=config.mood_city)))
+    except Exception:
+        logger.exception("[日程] 查询失败")
+        await schedule_cmd.finish(Message("我的日程表乱成一团了……过会儿再问我吧"))
 
 
 @aff_cmd.handle()

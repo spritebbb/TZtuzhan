@@ -87,6 +87,18 @@ def build_system_prompt(
         except Exception:
             pass
 
+    # 今日日程注入：菟菚有自己的作息，能在合适时机自然说出「在做什么」
+    schedule_line = ""
+    if user_id:
+        try:
+            from .schedule import schedule_prompt
+
+            sched = schedule_prompt(user_id)
+            if sched:
+                schedule_line = f"- {sched}\n"
+        except Exception:
+            pass
+
     notes = []
     if first_chat and stage == "初识":
         notes.append("这是你和对方的第一段对话，可以自然地询问对方想被怎么称呼。")
@@ -110,6 +122,7 @@ def build_system_prompt(
         f"- 你们的关系：{framing}\n"
         f"{bond_extra}"
         f"{mood_line}"
+        f"{schedule_line}"
         f"- 你对用户的称呼：{addr}\n"
         f"- 本轮注意：{note_text}\n"
         "特别提醒：**对方不提时间，你就绝口不提。** 不要主动说「这么晚/还不睡/该睡了/夜猫子/熬夜/注意时间」这类话，"

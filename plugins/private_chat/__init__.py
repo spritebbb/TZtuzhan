@@ -244,14 +244,16 @@ async def _debounce_flush(user_id: str) -> None:
                 rec = await collect_sticker(user_id, url)
                 if rec and rec.get("file"):
                     just_collected.append(rec["file"])
-            # ③ 按情绪/语境挑一张「别的」收藏回发：优先情绪匹配，其次同主题，再随机，都排除刚发的
+            # ③ 按情绪/语境挑一张「别的」收藏回发：优先情绪匹配（可关），其次同主题，再随机，都排除刚发的
             sticker = None
             try:
+                from core.features import flag
                 from core.sticker import guess_emotions, pick_by_emotion
 
-                emo = guess_emotions(img_desc or "")
-                if emo:
-                    sticker = pick_by_emotion(user_id, emo.split(",")[0], 5, exclude_files=set(just_collected))
+                if flag("emotion_sticker_enabled"):
+                    emo = guess_emotions(img_desc or "")
+                    if emo:
+                        sticker = pick_by_emotion(user_id, emo.split(",")[0], 5, exclude_files=set(just_collected))
             except Exception:
                 logger.exception("[表情回发] 情绪匹配失败，回退话题")
             if not sticker:

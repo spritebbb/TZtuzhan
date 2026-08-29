@@ -231,13 +231,15 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
     # 1.6) 惰性画像 + 口头禅提炼（共用独立游标 last_profile_msg_id，与 facts 并行）
     # → 后台执行，不阻塞回复
     try:
+        from .features import flag
         from .tasks import schedule
 
-        p_unseen = db.max_message_id(user_id) - db.get_last_profile_msg_id(user_id)
-        if p_unseen >= 10:
-            schedule(f"profile:{user_id}", lambda: _extract_profile_and_terms(user_id))
-        elif p_unseen >= _IDLE_MIN_NEW and _long_gap(db.last_message_ts(user_id)):
-            schedule(f"profile:{user_id}", lambda: _extract_profile_and_terms(user_id))
+        if flag("profile_enabled") or flag("terms_enabled") or flag("style_enabled"):
+            p_unseen = db.max_message_id(user_id) - db.get_last_profile_msg_id(user_id)
+            if p_unseen >= 10:
+                schedule(f"profile:{user_id}", lambda: _extract_profile_and_terms(user_id))
+            elif p_unseen >= _IDLE_MIN_NEW and _long_gap(db.last_message_ts(user_id)):
+                schedule(f"profile:{user_id}", lambda: _extract_profile_and_terms(user_id))
     except Exception:
         logger.exception("[pipeline] 惰性画像提炼调度失败")
 
@@ -406,60 +408,66 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
 
     # 4.1.6) 用户画像：结构化记录对方的信息/喜好/厌恶/习惯/性格，自然引用
     try:
+        from .features import flag
         from .profile import profile_prompt_text
 
-        profile = profile_prompt_text(user_id)
-        if profile:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": (
-                        profile
-                        + "\n这是你渐渐摸清的对方的画像。在对话里自然地体现出你懂他/她："
-                        "话题合适时随口带一句（比如他提到吃的你记得他爱吃什么、他低落时你记得他讨厌什么），"
-                        "别突然背画像、别复述列表，就像相处久了自然记得。"
-                    ),
-                }
-            )
+        if flag("profile_enabled"):
+            profile = profile_prompt_text(user_id)
+            if profile:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            profile
+                            + "\n这是你渐渐摸清的对方的画像。在对话里自然地体现出你懂他/她："
+                            "话题合适时随口带一句（比如他提到吃的你记得他爱吃什么、他低落时你记得他讨厌什么），"
+                            "别突然背画像、别复述列表，就像相处久了自然记得。"
+                        ),
+                    }
+                )
     except Exception:
         logger.exception("[pipeline] 用户画像注入失败")
 
     # 4.1.7) 口头禅/黑话：记住对方爱用的词，自然使用营造同频感
     try:
+        from .features import flag
         from .terms import terms_prompt_text
 
-        terms = terms_prompt_text(user_id)
-        if terms:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": (
-                        terms
-                        + "\n这些是你注意到对方爱用的词。在对话里合适时，可以自然地、克制地用上一两个，"
-                        "营造『你也是这么说话的』的同频感；别堆砌、别每句都用，用得不顺就别用。"
-                    ),
-                }
-            )
+        if flag("terms_enabled"):
+            terms = terms_prompt_text(user_id)
+            if terms:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            terms
+                            + "\n这些是你注意到对方爱用的词。在对话里合适时，可以自然地、克制地用上一两个，"
+                            "营造『你也是这么说话的』的同频感；别堆砌、别每句都用，用得不顺就别用。"
+                        ),
+                    }
+                )
     except Exception:
         logger.exception("[pipeline] 口头禅注入失败")
 
     # 4.1.8) 场景化表达风格：对方在不同场景的表达方式，对应场景自然贴合
     try:
+        from .features import flag
         from .style import style_map_prompt_text
 
-        style_map = style_map_prompt_text(user_id)
-        if style_map:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": (
-                        style_map
-                        + "\n这是你观察到的对方在不同场景的表达方式。当对话进入对应场景时，"
-                        "自然地用对方的方式回应（比如他倾诉时你用他习惯的短句节奏、他开玩笑时用他的调侃方式），"
-                        "营造『你懂他怎么说话』的默契；但别照搬得生硬，始终保持你自己的慵懒温柔。"
-                    ),
-                }
-            )
+        if flag("style_enabled"):
+            style_map = style_map_prompt_text(user_id)
+            if style_map:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            style_map
+                            + "\n这是你观察到的对方在不同场景的表达方式。当对话进入对应场景时，"
+                            "自然地用对方的方式回应（比如他倾诉时你用他习惯的短句节奏、他开玩笑时用他的调侃方式），"
+                            "营造『你懂他怎么说话』的默契；但别照搬得生硬，始终保持你自己的慵懒温柔。"
+                        ),
+                    }
+                )
     except Exception:
         logger.exception("[pipeline] 场景风格注入失败")
 

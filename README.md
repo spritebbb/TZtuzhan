@@ -175,7 +175,7 @@ cd D:\DSH\TZtuzhan
 .\.venv\Scripts\python.exe bot.py
 ```
 
-日志出现 `OneBot V11 | Bot <BOT_QQ> connected` 即连接成功。用**另一个 QQ** 私聊 bot 号：
+日志出现 `OneBot V11 | Bot <你的botQQ> connected` 即连接成功。用**另一个 QQ** 私聊 bot 号：
 
 - 发「你好」→ 应得到慵懒的回应
 - 发 `/好感` → 显示好感度阶段

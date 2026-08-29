@@ -30,10 +30,17 @@ if %ERRORLEVEL% == 0 (
 )
 
 REM === 2. 启动 NapCat（官方 launcher.bat，新窗口）===
-REM     -q <QQ号> 快速登录：凭据有效则自动登录免扫码；失效才需要扫码一次刷新
+REM     -q <BotQQ> 快速登录（从 .env 的 BOT_QQ 读取）：凭据有效则自动登录免扫码；失效才需扫码
+REM     未配置 BOT_QQ 时回退到普通登录（不传 -q）
+for /f "tokens=2 delims==" %%i in ('findstr /b "BOT_QQ" .env 2^>nul') do set "BOT_QQ=%%i"
+if not defined BOT_QQ set "BOT_QQ="
 echo.
-echo [1/2] 正在启动 NapCat（窗口：NapCat，快速登录 <BOT_QQ>）...
-start "NapCat" cmd /k "chcp 65001 >nul & cd /d D:\DSH\TZtuzhan\Napcat\NapCat.Shell.Windows.Node\napcat & launcher.bat -q <BOT_QQ>"
+echo [1/2] 正在启动 NapCat（窗口：NapCat，快速登录 %BOT_QQ%）...
+if defined BOT_QQ (
+    start "NapCat" cmd /k "chcp 65001 >nul & cd /d D:\DSH\TZtuzhan\Napcat\NapCat.Shell.Windows.Node\napcat & launcher.bat -q %BOT_QQ%"
+) else (
+    start "NapCat" cmd /k "chcp 65001 >nul & cd /d D:\DSH\TZtuzhan\Napcat\NapCat.Shell.Windows.Node\napcat & launcher.bat"
+)
 
 REM === 3. 启动 bot（venv python，新窗口）===
 echo [2/2] 正在启动 TZtuzhan Bot（窗口：Bot）...

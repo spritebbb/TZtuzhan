@@ -8,8 +8,8 @@ NapCat 是 QQNT 的协议实现，负责让 bot 能收发 QQ 私聊消息。
 - NapCat：`D:\DSH\TZtuzhan\Napcat\NapCat.Shell.Windows.Node\`（v4.18.19）
 - 启动脚本：**`napcat\launcher.bat`**（官方，带管理员提权；通过注册表找到 `D:\QQ\QQ.exe`）
 - QQNT：`D:\QQ\QQ.exe`（版本 9.9.33，已注册到注册表，launcher 能自动找到）
-- bot QQ 号：**<BOT_QQ>**
-- OneBot 正向 WS：**端口 3001**（已写入 `napcat\config\onebot11_<BOT_QQ>.json`）
+- bot QQ 号：**（你的 bot 小号，见 .env 的 BOT_QQ）**
+- OneBot 正向 WS：**端口 3001**（已写入 `napcat\config\onebot11_<BotQQ>.json`）
 - WebUI：`http://127.0.0.1:6099`（token 见 `config\webui.json`）
 - 配置文件（NapCat）已加入 `.gitignore`，不会进仓库
 
@@ -27,7 +27,7 @@ launcher.bat
 cd D:\DSH\TZtuzhan
 .\.venv\Scripts\python.exe bot.py
 ```
-日志出现 `OneBot V11 | Bot <BOT_QQ> connected` 即连接成功。
+日志出现 `OneBot V11 | Bot <你的botQQ> connected` 即连接成功。
 
 ### 验证
 ```powershell

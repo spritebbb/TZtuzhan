@@ -34,6 +34,10 @@ set_address_cmd = on_command("称呼", priority=4, block=True)
 aff_cmd = on_command("好感度", aliases={"好感", "aff"}, priority=4, block=True)
 mood_cmd = on_command("心情", aliases={"mood", "状态"}, priority=4, block=True)
 schedule_cmd = on_command("日程", aliases={"今日安排", "今天干啥", "日程表"}, priority=4, block=True)
+profile_cmd = on_command("画像", aliases={"你懂我吗", "你了解我吗", "profile"}, priority=4, block=True)
+terms_cmd = on_command("口头禅", aliases={"学到的词", "黑话", "terms"}, priority=4, block=True)
+style_cmd = on_command("风格", aliases={"表达方式", "你的观察", "style"}, priority=4, block=True)
+emoji_cmd = on_command("表情", aliases={"来张表情", "发个表情"}, priority=4, block=True)
 search_cmd = on_command("搜索", aliases={"搜"}, priority=4, block=True)
 proactive_cmd = on_command("主动", priority=4, block=True)
 dates_cmd = on_command("日子", aliases={"特殊日子", "纪念日"}, priority=4, block=True)
@@ -240,8 +244,18 @@ async def _debounce_flush(user_id: str) -> None:
                 rec = await collect_sticker(user_id, url)
                 if rec and rec.get("file"):
                     just_collected.append(rec["file"])
-            # ③ 按语境挑一张「别的」收藏回发：优先同主题，其次随机，但都排除刚发的
-            sticker = pick_sticker(user_id, img_desc or "", 5, exclude_files=set(just_collected))
+            # ③ 按情绪/语境挑一张「别的」收藏回发：优先情绪匹配，其次同主题，再随机，都排除刚发的
+            sticker = None
+            try:
+                from core.sticker import guess_emotions, pick_by_emotion
+
+                emo = guess_emotions(img_desc or "")
+                if emo:
+                    sticker = pick_by_emotion(user_id, emo.split(",")[0], 5, exclude_files=set(just_collected))
+            except Exception:
+                logger.exception("[表情回发] 情绪匹配失败，回退话题")
+            if not sticker:
+                sticker = pick_sticker(user_id, img_desc or "", 5, exclude_files=set(just_collected))
             if sticker:
                 try:
                     from core.speak import with_sticker
@@ -471,6 +485,96 @@ async def handle_schedule(event: PrivateMessageEvent):
     except Exception:
         logger.exception("[日程] 查询失败")
         await schedule_cmd.finish(Message("我的日程表乱成一团了……过会儿再问我吧"))
+
+
+@profile_cmd.handle()
+async def handle_profile(event: PrivateMessageEvent):
+    """/画像：查看菟菚对你的了解；/画像 添加 <分类> <内容> 手动补充；/画像 删除 <id>。"""
+    if not isinstance(event, PrivateMessageEvent):
+        return
+    uid = str(event.user_id)
+    from core.profile import profile_text
+
+    text = _cmd_arg(event.get_plaintext(), "画像", "你懂我吗", "你了解我吗", "profile")
+
+    # 删除
+    m_del = re.match(r"^删除\s*(\d+)$", text)
+    if m_del:
+        ok = db.del_profile(uid, int(m_del.group(1)))
+        await profile_cmd.finish(Message("嗯，这条我忘了。" if ok else "没找到那条记录……"))
+        return
+
+    # 手动添加：/画像 添加 喜好 用户喜欢猫
+    m_add = re.match(r"^(?:添加|记下|记住)\s+(\S+)\s+(.+)$", text)
+    if m_add:
+        cat = {"喜好": "likes", "厌恶": "dislikes", "习惯": "habits",
+               "性格": "personality", "基本": "basic", "基本信息": "basic",
+               "其他": "other"}.get(m_add.group(1))
+        if not cat:
+            await profile_cmd.finish(Message("分类要用：喜好/厌恶/习惯/性格/基本信息/其他"))
+            return
+        content = f"用户{m_add.group(2).strip()}"[:80]
+        rid = db.add_profile(uid, cat, content, "manual")
+        await profile_cmd.finish(Message(f"嗯，记下了。" if rid is not None else "这条我已经知道了～"))
+        return
+
+    await profile_cmd.finish(Message(profile_text(uid)))
+
+
+@terms_cmd.handle()
+async def handle_terms(event: PrivateMessageEvent):
+    """/口头禅：查看菟菚记下的你的口头禅/黑话；/口头禅 删除 <id>。"""
+    if not isinstance(event, PrivateMessageEvent):
+        return
+    uid = str(event.user_id)
+    text = _cmd_arg(event.get_plaintext(), "口头禅", "学到的词", "黑话", "terms")
+    m_del = re.match(r"^删除\s*(\d+)$", text)
+    if m_del:
+        ok = db.del_term(uid, int(m_del.group(1)))
+        await terms_cmd.finish(Message("嗯，这个我忘了。" if ok else "没找到那条……"))
+        return
+    terms = db.get_terms(uid)
+    if not terms:
+        await terms_cmd.finish(Message("（菟菚还没注意到你爱用的词，多说说话她就知道了）"))
+        return
+    lines = []
+    for t in terms:
+        if t["category"] == "slang" and t["meaning"]:
+            lines.append(f"· {t['term']}（{t['meaning']}，出现{t['count']}次）")
+        else:
+            lines.append(f"· {t['term']}（出现{t['count']}次）")
+    await terms_cmd.finish(Message("我注意到你爱用的词：\n" + "\n".join(lines)))
+
+
+@style_cmd.handle()
+async def handle_style(event: PrivateMessageEvent):
+    """/风格：查看菟菚观察到的你的场景化表达方式。"""
+    if not isinstance(event, PrivateMessageEvent):
+        return
+    uid = str(event.user_id)
+    from core.style import style_map_text
+
+    await style_cmd.finish(Message(style_map_text(uid)))
+
+
+@emoji_cmd.handle()
+async def handle_emoji(event: PrivateMessageEvent):
+    """/表情 <情绪>：按情绪发一张收藏的表情包；不带参数列出可用情绪。"""
+    if not isinstance(event, PrivateMessageEvent):
+        return
+    uid = str(event.user_id)
+    text = _cmd_arg(event.get_plaintext(), "表情", "来张表情", "发个表情")
+    from core.sticker import pick_by_emotion, emotion_tags
+
+    if not text:
+        await emoji_cmd.finish(Message("可以用：/表情 " + " / ".join(emotion_tags())))
+        return
+    clean = text.strip("（ ）()。")
+    sticker = pick_by_emotion(uid, clean, 3)
+    if not sticker:
+        await emoji_cmd.finish(Message(f"（还没有「{clean}」的表情，多发些表情包我就收集了）"))
+        return
+    await _send_sticker_to(event.bot, uid, sticker[0])
 
 
 @aff_cmd.handle()

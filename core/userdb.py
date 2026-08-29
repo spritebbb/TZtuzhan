@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS facts (
 );
 CREATE TABLE IF NOT EXISTS user_meta (
     user_id          TEXT PRIMARY KEY,
-    last_fact_msg_id INTEGER NOT NULL DEFAULT 0
+    last_fact_msg_id INTEGER NOT NULL DEFAULT 0,
+    last_profile_msg_id INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS kv_store (
     user_id TEXT NOT NULL,
@@ -80,7 +81,34 @@ CREATE TABLE IF NOT EXISTS stickers (
     file     TEXT NOT NULL,    -- 本地缓存文件路径
     url      TEXT NOT NULL,    -- 原始图片 URL
     desc     TEXT NOT NULL DEFAULT '',  -- 视觉模型描述（用于话题匹配回发）
+    emotion  TEXT NOT NULL DEFAULT '',  -- 情绪标签（逗号分隔，如"开心,可爱"）
     count    INTEGER NOT NULL DEFAULT 1, -- 该表情被看到/收藏的次数
+    ts       TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_profile (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id  TEXT NOT NULL,
+    category TEXT NOT NULL,   -- basic / likes / dislikes / habits / personality / other
+    content  TEXT NOT NULL,   -- 画像条目（如「喜欢下雨天」）
+    source   TEXT NOT NULL DEFAULT 'llm',  -- 来源（llm / manual / date）
+    ts       TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_terms (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    TEXT NOT NULL,
+    term       TEXT NOT NULL,   -- 口头禅/黑话词
+    category   TEXT NOT NULL DEFAULT 'catchphrase',  -- catchphrase(口头禅) / slang(黑话)
+    meaning    TEXT NOT NULL DEFAULT '',  -- 含义（黑话解释）
+    count      INTEGER NOT NULL DEFAULT 1,  -- 出现次数
+    first_seen TEXT NOT NULL,
+    last_seen  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_style_map (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id  TEXT NOT NULL,
+    situation TEXT NOT NULL,  -- 场景（如「对方倾诉烦恼时」「对方开玩笑时」）
+    style    TEXT NOT NULL,   -- 该场景下对方的表达方式（如「喜欢用短句+省略号」）
+    count    INTEGER NOT NULL DEFAULT 1,
     ts       TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, id);
@@ -88,6 +116,9 @@ CREATE INDEX IF NOT EXISTS idx_long_memory_user ON long_memory(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_facts_user ON facts(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_dates_user ON important_dates(user_id);
 CREATE INDEX IF NOT EXISTS idx_stickers_user ON stickers(user_id);
+CREATE INDEX IF NOT EXISTS idx_profile_user ON user_profile(user_id);
+CREATE INDEX IF NOT EXISTS idx_terms_user ON user_terms(user_id);
+CREATE INDEX IF NOT EXISTS idx_style_map_user ON user_style_map(user_id);
 """
 
 
@@ -116,6 +147,16 @@ class UserDB:
             pass
         try:
             self.conn.execute("ALTER TABLE users ADD COLUMN mood_updated_at TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # 旧库迁移：user_meta 补 last_profile_msg_id 列
+        try:
+            self.conn.execute("ALTER TABLE user_meta ADD COLUMN last_profile_msg_id INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        # 旧库迁移：stickers 补 emotion 列
+        try:
+            self.conn.execute("ALTER TABLE stickers ADD COLUMN emotion TEXT NOT NULL DEFAULT ''")
         except sqlite3.OperationalError:
             pass
         self.conn.commit()
@@ -372,6 +413,151 @@ class UserDB:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [{"content": c} for _, c in scored[:top_k]]
 
+    # ---- 用户画像（user_profile）----
+
+    def add_profile(self, user_id: str, category: str, content: str, source: str = "llm") -> int | None:
+        """存一条画像条目；同分类下与已有条目重叠≥50% 视为重复则跳过。
+
+        category：basic / likes / dislikes / habits / personality / other。
+        返回新记录 id；重复/跳过返回 None。
+        """
+        content = content.strip()
+        if not content or not category:
+            return None
+        q = _bigrams(content)
+        rows = self.conn.execute(
+            "SELECT content FROM user_profile WHERE user_id = ? AND category = ? ORDER BY id DESC LIMIT 200",
+            (user_id, category),
+        ).fetchall()
+        for r in rows:
+            existing = _bigrams(r["content"])
+            if q and existing:
+                overlap = len(q & existing) / min(len(q), len(existing))
+                if overlap >= 0.5:
+                    return None
+        cur = self.conn.execute(
+            "INSERT INTO user_profile (user_id, category, content, source, ts) VALUES (?, ?, ?, ?, ?)",
+            (user_id, category, content, source, datetime.now().isoformat(timespec="seconds")),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def get_profile(self, user_id: str, category: str | None = None) -> list[dict]:
+        """读取画像条目；category 为空返回全部（按分类分组排序）。"""
+        if category:
+            rows = self.conn.execute(
+                "SELECT id, category, content, source, ts FROM user_profile WHERE user_id = ? AND category = ? ORDER BY id",
+                (user_id, category),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id, category, content, source, ts FROM user_profile WHERE user_id = ? ORDER BY id",
+                (user_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def del_profile(self, user_id: str, profile_id: int) -> bool:
+        cur = self.conn.execute(
+            "DELETE FROM user_profile WHERE user_id = ? AND id = ?", (user_id, profile_id)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def clear_profile(self, user_id: str, category: str | None = None) -> int:
+        if category:
+            cur = self.conn.execute(
+                "DELETE FROM user_profile WHERE user_id = ? AND category = ?", (user_id, category)
+            )
+        else:
+            cur = self.conn.execute("DELETE FROM user_profile WHERE user_id = ?", (user_id,))
+        self.conn.commit()
+        return cur.rowcount
+
+    # ---- 用户口头禅/黑话（user_terms）----
+
+    def add_term(self, user_id: str, term: str, category: str = "catchphrase", meaning: str = "") -> bool:
+        """记录用户口头禅/黑话；已存在则次数 +1 并刷新 last_seen。
+
+        返回是否新增（False=已存在只累加）。
+        """
+        term = term.strip()[:20]
+        if not term or len(term) < 1:
+            return False
+        now = datetime.now().isoformat(timespec="seconds")
+        row = self.conn.execute(
+            "SELECT id FROM user_terms WHERE user_id = ? AND term = ?", (user_id, term)
+        ).fetchone()
+        if row:
+            self.conn.execute(
+                "UPDATE user_terms SET count = count + 1, last_seen = ? WHERE id = ?",
+                (now, row["id"]),
+            )
+            self.conn.commit()
+            return False
+        self.conn.execute(
+            "INSERT INTO user_terms (user_id, term, category, meaning, count, first_seen, last_seen) "
+            "VALUES (?, ?, ?, ?, 1, ?, ?)",
+            (user_id, term, category, meaning, now, now),
+        )
+        self.conn.commit()
+        return True
+
+    def get_terms(self, user_id: str, limit: int = 30) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT id, term, category, meaning, count FROM user_terms "
+            "WHERE user_id = ? ORDER BY count DESC, id DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def del_term(self, user_id: str, term_id: int) -> bool:
+        cur = self.conn.execute(
+            "DELETE FROM user_terms WHERE user_id = ? AND id = ?", (user_id, term_id)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    # ---- 场景化表达风格（user_style_map）----
+
+    def add_style_map(self, user_id: str, situation: str, style: str) -> bool:
+        """记录「场景→表达方式」；同场景同风格视为重复只累加次数。"""
+        situation = situation.strip()[:40]
+        style = style.strip()[:60]
+        if not situation or not style:
+            return False
+        now = datetime.now().isoformat(timespec="seconds")
+        row = self.conn.execute(
+            "SELECT id FROM user_style_map WHERE user_id = ? AND situation = ? AND style = ?",
+            (user_id, situation, style),
+        ).fetchone()
+        if row:
+            self.conn.execute(
+                "UPDATE user_style_map SET count = count + 1 WHERE id = ?", (row["id"],)
+            )
+            self.conn.commit()
+            return False
+        self.conn.execute(
+            "INSERT INTO user_style_map (user_id, situation, style, count, ts) VALUES (?, ?, ?, 1, ?)",
+            (user_id, situation, style, now),
+        )
+        self.conn.commit()
+        return True
+
+    def get_style_map(self, user_id: str, limit: int = 20) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT id, situation, style, count FROM user_style_map "
+            "WHERE user_id = ? ORDER BY count DESC, id DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def del_style_map(self, user_id: str, style_id: int) -> bool:
+        cur = self.conn.execute(
+            "DELETE FROM user_style_map WHERE user_id = ? AND id = ?", (user_id, style_id)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     # ---- 事实提炼游标 ----
     def get_last_fact_msg_id(self, user_id: str) -> int:
         row = self.conn.execute(
@@ -383,6 +569,20 @@ class UserDB:
         self.conn.execute(
             "INSERT INTO user_meta (user_id, last_fact_msg_id) VALUES (?, ?) "
             "ON CONFLICT(user_id) DO UPDATE SET last_fact_msg_id = excluded.last_fact_msg_id",
+            (user_id, msg_id),
+        )
+        self.conn.commit()
+
+    def get_last_profile_msg_id(self, user_id: str) -> int:
+        row = self.conn.execute(
+            "SELECT last_profile_msg_id FROM user_meta WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return row["last_profile_msg_id"] if row else 0
+
+    def set_last_profile_msg_id(self, user_id: str, msg_id: int) -> None:
+        self.conn.execute(
+            "INSERT INTO user_meta (user_id, last_profile_msg_id) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET last_profile_msg_id = excluded.last_profile_msg_id",
             (user_id, msg_id),
         )
         self.conn.commit()
@@ -490,7 +690,7 @@ def delete_important_date(date_id: int) -> None:
 # ---- stickers（表情包收藏）----
 
 
-def save_sticker(user_id: str, file: str, url: str, desc: str) -> int:
+def save_sticker(user_id: str, file: str, url: str, desc: str, emotion: str = "") -> int:
     """收藏一张用户发的表情包；同 URL 已存在则累计 count，返回记录 id。"""
     db.conn.execute("PRAGMA busy_timeout = 5000")
     try:
@@ -508,11 +708,13 @@ def save_sticker(user_id: str, file: str, url: str, desc: str) -> int:
             "WHERE id = ?",
             (desc, row["id"]),
         )
+        if emotion:
+            update_sticker_emotion(row["id"], emotion)
         db.conn.commit()
         return row["id"]
     cur = db.conn.execute(
-        "INSERT INTO stickers (user_id, file, url, desc, count, ts) VALUES (?, ?, ?, ?, 1, ?)",
-        (user_id, file, url, desc, datetime.now().isoformat(timespec="seconds")),
+        "INSERT INTO stickers (user_id, file, url, desc, emotion, count, ts) VALUES (?, ?, ?, ?, ?, 1, ?)",
+        (user_id, file, url, desc, emotion, datetime.now().isoformat(timespec="seconds")),
     )
     db.conn.commit()
     return cur.lastrowid
@@ -549,6 +751,48 @@ def get_sticker_by_desc(user_id: str, keyword: str, limit: int = 30) -> list[dic
             scored.append((hits, dict(r)))
     scored.sort(key=lambda x: (x[0], -x[1].get("count", 0)), reverse=True)
     return [d for _, d in scored[:limit]]
+
+
+def get_sticker_by_emotion(user_id: str, emotion: str, limit: int = 10) -> list[dict]:
+    """按情绪标签挑表情包（情绪匹配回发）。
+
+    emotion 是单个情绪词（如"开心""难过"）；匹配 emotion 字段中包含该词的收藏，
+    无匹配返回 []（调用方再回退到话题/热门）。
+    """
+    emotion = emotion.strip()
+    if not emotion:
+        return []
+    rows = db.conn.execute(
+        "SELECT * FROM stickers WHERE user_id = ? ORDER BY count DESC LIMIT 300",
+        (user_id,),
+    ).fetchall()
+    hits = []
+    for r in rows:
+        emo = (r["emotion"] or "").split(",")
+        if any(emotion in e.strip() or e.strip() in emotion for e in emo if e.strip()):
+            hits.append(dict(r))
+    hits.sort(key=lambda x: -x.get("count", 0))
+    return hits[:limit]
+
+
+def update_sticker_emotion(sticker_id: int, emotion: str) -> None:
+    """为指定表情包写入/合并情绪标签。"""
+    if not sticker_id:
+        return
+    emotion = emotion.strip()
+    if not emotion:
+        return
+    row = db.conn.execute("SELECT emotion FROM stickers WHERE id = ?", (sticker_id,)).fetchone()
+    if not row:
+        return
+    existing = {e.strip() for e in (row["emotion"] or "").split(",") if e.strip()}
+    for e in emotion.split(","):
+        e = e.strip()
+        if e:
+            existing.add(e)
+    merged = ",".join(sorted(existing))
+    db.conn.execute("UPDATE stickers SET emotion = ? WHERE id = ?", (merged, sticker_id))
+    db.conn.commit()
 
 
 db = UserDB()

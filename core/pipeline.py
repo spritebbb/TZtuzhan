@@ -145,6 +145,27 @@ def trim_farewell(user_text: str, reply: str) -> str:
     return _FAREWELL_REPLY.get(word, f"{word}")
 
 
+async def _extract_profile_and_terms(user_id: str) -> None:
+    """画像 + 口头禅 + 场景风格同批提炼（共用游标，一次取消息、三次 LLM 并行、一次推进游标）。"""
+    from .profile import extract_profile
+    from .style import extract_style_map
+    from .terms import extract_terms
+
+    # 取一次消息（画像/口头禅/风格共享）
+    last_id = db.get_last_profile_msg_id(user_id)
+    rows = db.messages_after(user_id, last_id, 60)
+    if len(rows) < 8:
+        return
+    done = rows[-1]["id"]
+    import asyncio
+
+    await asyncio.gather(
+        extract_profile(user_id, rows=rows, done=done),
+        extract_terms(user_id, rows=rows, done=done),
+        extract_style_map(user_id, rows=rows, done=done),
+    )
+
+
 async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bool = False) -> str:
     """处理一条用户消息，返回菟菚的回复。
 
@@ -153,6 +174,14 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
     """
     user = db.ensure_user(user_id)
     first_chat = not user["first_chat_done"]
+
+    # 0.5) 口头禅即时捕获（正则快筛，后台累计；不阻塞对话）
+    try:
+        from .terms import note_message
+
+        note_message(user_id, text)
+    except Exception:
+        pass
 
     # 1) 好感度即时规则（含跨天回滚）
     await affection.on_message(user_id, text)
@@ -198,6 +227,19 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
             schedule(f"facts:{user_id}", lambda: extract_facts(user_id))
     except Exception:
         logger.exception("[pipeline] 惰性事实提炼调度失败")
+
+    # 1.6) 惰性画像 + 口头禅提炼（共用独立游标 last_profile_msg_id，与 facts 并行）
+    # → 后台执行，不阻塞回复
+    try:
+        from .tasks import schedule
+
+        p_unseen = db.max_message_id(user_id) - db.get_last_profile_msg_id(user_id)
+        if p_unseen >= 10:
+            schedule(f"profile:{user_id}", lambda: _extract_profile_and_terms(user_id))
+        elif p_unseen >= _IDLE_MIN_NEW and _long_gap(db.last_message_ts(user_id)):
+            schedule(f"profile:{user_id}", lambda: _extract_profile_and_terms(user_id))
+    except Exception:
+        logger.exception("[pipeline] 惰性画像提炼调度失败")
 
     # 2) 称呼与过分称呼处理（无论是否已设称呼，过分称呼都要检测并扣分）
     pref = user["nickname_pref"]
@@ -361,6 +403,65 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
                 + "\n".join(f"- {f}" for f in facts),
             }
         )
+
+    # 4.1.6) 用户画像：结构化记录对方的信息/喜好/厌恶/习惯/性格，自然引用
+    try:
+        from .profile import profile_prompt_text
+
+        profile = profile_prompt_text(user_id)
+        if profile:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        profile
+                        + "\n这是你渐渐摸清的对方的画像。在对话里自然地体现出你懂他/她："
+                        "话题合适时随口带一句（比如他提到吃的你记得他爱吃什么、他低落时你记得他讨厌什么），"
+                        "别突然背画像、别复述列表，就像相处久了自然记得。"
+                    ),
+                }
+            )
+    except Exception:
+        logger.exception("[pipeline] 用户画像注入失败")
+
+    # 4.1.7) 口头禅/黑话：记住对方爱用的词，自然使用营造同频感
+    try:
+        from .terms import terms_prompt_text
+
+        terms = terms_prompt_text(user_id)
+        if terms:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        terms
+                        + "\n这些是你注意到对方爱用的词。在对话里合适时，可以自然地、克制地用上一两个，"
+                        "营造『你也是这么说话的』的同频感；别堆砌、别每句都用，用得不顺就别用。"
+                    ),
+                }
+            )
+    except Exception:
+        logger.exception("[pipeline] 口头禅注入失败")
+
+    # 4.1.8) 场景化表达风格：对方在不同场景的表达方式，对应场景自然贴合
+    try:
+        from .style import style_map_prompt_text
+
+        style_map = style_map_prompt_text(user_id)
+        if style_map:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        style_map
+                        + "\n这是你观察到的对方在不同场景的表达方式。当对话进入对应场景时，"
+                        "自然地用对方的方式回应（比如他倾诉时你用他习惯的短句节奏、他开玩笑时用他的调侃方式），"
+                        "营造『你懂他怎么说话』的默契；但别照搬得生硬，始终保持你自己的慵懒温柔。"
+                    ),
+                }
+            )
+    except Exception:
+        logger.exception("[pipeline] 场景风格注入失败")
 
     # 逐渐学习对方说话风格（由每日/定期提炼，注入供自然模仿）
     style = db.get_style(user_id)

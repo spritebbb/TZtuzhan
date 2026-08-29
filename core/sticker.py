@@ -12,13 +12,35 @@ from pathlib import Path
 
 from .config import config
 from .log import logger
-from .userdb import get_sticker_by_desc, get_stickers, save_sticker
+from .userdb import get_sticker_by_desc, get_stickers, get_sticker_by_emotion, save_sticker, update_sticker_emotion
 from .vision import describe_image, _guess_mime
 
 # 收藏上限：避免本地目录无限膨胀
 MAX_STICKERS = 200
 # 单张表情包下载上限 8MB（防超大图把磁盘/识图拖垮）
 _STICKER_MAX_BYTES = 8 * 1024 * 1024
+
+# 情绪关键词 → 情绪标签（从视觉描述推断；借鉴 Maibot emoji_manager 按情绪挑选）
+_EMOTION_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "开心": ("笑", "开心", "高兴", "哈哈", "乐", "可爱", "比心", "耶", "喜"),
+    "难过": ("哭", "难过", "伤心", "委屈", "泪", "呜呜", "可怜", "悲伤"),
+    "生气": ("生气", "愤怒", "怒", "凶", "发火", "暴躁", "气"),
+    "惊讶": ("惊讶", "震惊", "惊", "瞪", "无语", "呆"),
+    "撒娇": ("撒娇", "卖萌", "求", "蹭", "依偎", "撒娇"),
+    "困倦": ("困", "累", "疲惫", "打哈欠", "睡"),
+    "日常": ("日常", "普通", "平静", "淡然", "面无表情", "淡定"),
+}
+
+
+def guess_emotions(desc: str) -> str:
+    """从视觉描述推断情绪标签（逗号分隔）；无匹配返回 ''（存库时当日常）。"""
+    if not desc:
+        return ""
+    tags = []
+    for label, kws in _EMOTION_KEYWORDS.items():
+        if any(k in desc for k in kws):
+            tags.append(label)
+    return ",".join(tags)
 
 
 def _download(url: str, timeout: int = 20) -> bytes:
@@ -48,7 +70,7 @@ def _stickers_dir() -> Path:
 
 
 async def collect(user_id: str, url: str) -> dict | None:
-    """收藏用户发的表情包；下载图片、视觉描述、入库。失败返回 None（不阻塞对话）。"""
+    """收藏用户发的表情包；下载图片、视觉描述、情绪推断、入库。失败返回 None（不阻塞对话）。"""
     if not url:
         return None
     try:
@@ -60,8 +82,9 @@ async def collect(user_id: str, url: str) -> dict | None:
         path = _stickers_dir() / f"{digest}{ext}"
         path.write_bytes(data)  # 幂等：同 digest 覆盖写入同一文件
         desc = await describe_image(url)
-        record_id = save_sticker(user_id, str(path), url, desc)
-        return {"id": record_id, "file": str(path), "desc": desc}
+        emotion = guess_emotions(desc)
+        record_id = save_sticker(user_id, str(path), url, desc, emotion)
+        return {"id": record_id, "file": str(path), "desc": desc, "emotion": emotion}
     except Exception:
         logger.warning("[表情收藏] 收集失败：{}", url)
         return None
@@ -84,6 +107,22 @@ def pick(user_id: str, keyword: str, limit: int = 30, exclude_files: set[str] | 
             return hits
     # 话题没匹配到 → 返回收藏里出现次数最多的（仍排除刚发的）
     return _sift(get_stickers(user_id, limit))
+
+
+def pick_by_emotion(user_id: str, emotion: str, limit: int = 5, exclude_files: set[str] | None = None) -> list[dict]:
+    """按情绪挑收藏的表情包（情绪匹配回发）。
+
+    emotion 是情绪词（开心/难过/生气/惊讶/撒娇/困倦/日常）。
+    无匹配返回 []（调用方回退到话题/热门）。
+    """
+    exclude = set(exclude_files or ())
+    hits = get_sticker_by_emotion(user_id, emotion, limit * 4)
+    return [r for r in hits if r.get("file") not in exclude][:limit]
+
+
+def emotion_tags() -> list[str]:
+    """可用的情绪标签（/表情 命令提示用）。"""
+    return list(_EMOTION_KEYWORDS.keys())
 
 
 def get_recent_sticker(user_id: str) -> str | None:

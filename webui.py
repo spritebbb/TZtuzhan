@@ -22,7 +22,8 @@ from __future__ import annotations
 import os
 import sqlite3
 import sys
-from datetime import date
+import threading
+from datetime import date, datetime
 from pathlib import Path
 
 # 确保能找到 core 模块
@@ -36,17 +37,19 @@ from core.config import config
 from core.features import all_flags, set_flag, FLAG_DEFAULTS
 
 # ---- 数据库（WAL 模式支持 bot 与 webui 多进程并发读写）----
+# FastAPI 是多线程服务器，用线程本地连接避免同一连接跨线程竞态。
 _db_path = config.data_dir / "bot.db"
-_conn: sqlite3.Connection | None = None
+_tls = threading.local()
 
 
 def _get_db() -> sqlite3.Connection:
-    global _conn
-    if _conn is None:
-        _conn = sqlite3.connect(_db_path, check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _conn.execute("PRAGMA busy_timeout = 5000")
-    return _conn
+    conn = getattr(_tls, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(_db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 5000")
+        _tls.conn = conn
+    return conn
 
 
 def _q(sql: str, params=()) -> list[dict]:
@@ -184,6 +187,18 @@ def _page(title: str, content: str, active: str) -> HTMLResponse:
     return HTMLResponse(html)
 
 
+def _esc(s) -> str:
+    """HTML 转义用户数据，防止面板 XSS。"""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+    )
+
+
 # ---- FastAPI ----
 app = FastAPI(title="菟菚管理面板")
 
@@ -224,7 +239,7 @@ async def dashboard():
     bar_w = max(3, min(100, aff))
     content = f"""
     <div class="card">
-        <h2>👤 {uid} · {u.get('nickname_pref','') or '未设置称呼'} · {u.get('style_profile','')[:40] or ''}</h2>
+        <h2>👤 {_esc(uid)} · {_esc((u.get('nickname_pref') or '') or '未设置称呼')} · {_esc((u.get('style_profile') or '')[:40])}</h2>
         <div class="stats">{stat_html}</div>
         <div class="bar"><div style="width:{bar_w}%"></div></div>
         <div class="hint">好感度 {aff}/100{(' · 下一阶段：' + next_s) if next_s else ' · 已到最高阶段'}</div>
@@ -289,7 +304,7 @@ async def affection_page():
     logs = _q("SELECT * FROM affection_log WHERE user_id=? ORDER BY id DESC LIMIT 50", (uid,))
     bar_w = max(3, min(100, aff))
     log_rows = "".join(
-        f'<tr><td>{r["ts"]}</td><td>{"+" if r["delta"]>0 else ""}{r["delta"]}</td><td>{r["reason"]}</td></tr>'
+        f'<tr><td>{_esc(r["ts"])}</td><td>{"+" if r["delta"]>0 else ""}{r["delta"]}</td><td>{_esc(r["reason"])}</td></tr>'
         for r in logs
     )
     bond_html = f'<div class="hint">💍 羁绊：{bond[0]} —— {bond[1]}</div>' if bond else ""
@@ -322,8 +337,8 @@ async def affection_set(value: int = Form(...), reason: str = Form("")):
         _get_db().execute("UPDATE users SET affection=? WHERE user_id=?", (value, uid))
         if delta != 0:
             _get_db().execute(
-                "INSERT INTO affection_log (user_id, delta, reason, ts) VALUES (?,?,?,datetime('now','localtime'))",
-                (uid, delta, (reason or "面板手动调节")[:100]),
+                "INSERT INTO affection_log (user_id, delta, reason, ts) VALUES (?,?,?,?)",
+                (uid, delta, (reason or "面板手动调节")[:100], datetime.now().isoformat(timespec="seconds")),
             )
         _get_db().commit()
     return RedirectResponse("/affection", status_code=302)
@@ -362,8 +377,8 @@ async def mood_set(value: int = Form(60), reset: str = Form("")):
     if uid:
         v = 60 if reset else max(0, min(100, int(value)))
         _get_db().execute(
-            "UPDATE users SET mood_value=?, mood_updated_at=datetime('now','localtime') WHERE user_id=?",
-            (v, uid),
+            "UPDATE users SET mood_value=?, mood_updated_at=? WHERE user_id=?",
+            (v, datetime.now().isoformat(timespec="seconds"), uid),
         )
         _get_db().commit()
     return RedirectResponse("/mood", status_code=302)
@@ -378,8 +393,8 @@ async def dates_page():
     rows = _q("SELECT * FROM important_dates WHERE user_id=? ORDER BY date", (uid,))
     _K = {"birthday": "🎂 生日", "anniversary": "💞 纪念日", "other": "📌 其他"}
     items = "".join(
-        f'<tr><td>{r["date"]}</td><td>{r["label"]}</td>'
-        f'<td>{_K.get(r["kind"], r["kind"])}</td>'
+        f'<tr><td>{r["date"]}</td><td>{_esc(r["label"])}</td>'
+        f'<td>{_K.get(r["kind"], _esc(r["kind"]))}</td>'
         f'<td>{r["year"] if r["year"] else "每年"}</td>'
         f'<td><form action="/dates/delete/{r["id"]}" method="post" style="display:inline"><button class="del-btn">删除</button></form></td></tr>'
         for r in rows
@@ -409,10 +424,18 @@ async def dates_page():
 async def dates_add(date: str = Form(...), label: str = Form(...), kind: str = Form("other"), year: int = Form(None)):
     uid = _first_uid()
     d = date.strip()
-    if uid and len(d) == 5 and d[2] == "-":
+    valid = False
+    if len(d) == 5 and d[2] == "-":
+        try:
+            mm, dd = int(d[:2]), int(d[3:])
+            if 1 <= mm <= 12 and 1 <= dd <= 31:
+                valid = True
+        except ValueError:
+            valid = False
+    if uid and valid:
         _get_db().execute(
-            "INSERT INTO important_dates (user_id, date, label, kind, year, ts) VALUES (?,?,?,?,?,datetime('now','localtime'))",
-            (uid, d, label.strip()[:50], kind, year),
+            "INSERT INTO important_dates (user_id, date, label, kind, year, ts) VALUES (?,?,?,?,?,?)",
+            (uid, d, label.strip()[:50], kind, year, datetime.now().isoformat(timespec="seconds")),
         )
         _get_db().commit()
     return RedirectResponse("/dates", status_code=302)
@@ -434,12 +457,12 @@ async def memory_page():
     lmem = _q("SELECT * FROM long_memory WHERE user_id=? ORDER BY id DESC LIMIT 100", (uid,))
     facts = _q("SELECT * FROM facts WHERE user_id=? ORDER BY id DESC LIMIT 100", (uid,))
     lm_rows = "".join(
-        f'<tr><td>{r["ts"]}</td><td>{r["content"]}</td>'
+        f'<tr><td>{_esc(r["ts"])}</td><td>{_esc(r["content"])}</td>'
         f'<td><form action="/memory/lm/delete/{r["id"]}" method="post" style="display:inline"><button class="del-btn">删</button></form></td></tr>'
         for r in lmem
     )
     f_rows = "".join(
-        f'<tr><td>{r["ts"]}</td><td>{r["content"]}</td>'
+        f'<tr><td>{_esc(r["ts"])}</td><td>{_esc(r["content"])}</td>'
         f'<td><form action="/memory/fact/delete/{r["id"]}" method="post" style="display:inline"><button class="del-btn">删</button></form></td></tr>'
         for r in facts
     )
@@ -478,9 +501,9 @@ async def profile_page():
     _CAT = {"basic": "基本信息", "likes": "喜好", "dislikes": "厌恶", "habits": "习惯", "personality": "性格", "other": "其他"}
     _COLORS = {"likes": "tag-likes", "dislikes": "tag-dislikes", "habits": "tag-habits", "personality": "tag-personality", "basic": "tag-basic", "other": "tag-other"}
     items = "".join(
-        f'<tr><td><span class="tag {_COLORS.get(r["category"],"tag-other")}">{_CAT.get(r["category"],r["category"])}</span></td>'
-        f'<td>{r["content"]}</td>'
-        f'<td>{r["source"]}</td>'
+        f'<tr><td><span class="tag {_COLORS.get(r["category"],"tag-other")}">{_CAT.get(r["category"], _esc(r["category"]))}</span></td>'
+        f'<td>{_esc(r["content"])}</td>'
+        f'<td>{_esc(r["source"])}</td>'
         f'<td><form action="/profile/delete/{r["id"]}" method="post" style="display:inline">'
         f'<button class="del-btn">删除</button></form></td></tr>'
         for r in rows
@@ -511,8 +534,8 @@ async def terms_page():
     rows = _q("SELECT * FROM user_terms WHERE user_id=? ORDER BY count DESC, id DESC", (uid,))
     items = "".join(
         f'<tr><td>{"🧊 黑话" if r["category"]=="slang" else "💬 口头禅"}</td>'
-        f'<td>{r["term"]}</td>'
-        f'<td>{r["meaning"] or "-"}</td>'
+        f'<td>{_esc(r["term"])}</td>'
+        f'<td>{_esc(r["meaning"] or "-")}</td>'
         f'<td>{r["count"]}</td>'
         f'<td><form action="/terms/delete/{r["id"]}" method="post" style="display:inline">'
         f'<button class="del-btn">删除</button></form></td></tr>'
@@ -545,7 +568,7 @@ async def style_page():
     style_desc = _q1("SELECT style_profile FROM users WHERE user_id=?", (uid,)) or {}
     sp = (style_desc.get("style_profile") or "") if style_desc else ""
     items = "".join(
-        f'<tr><td>{r["situation"]}</td><td>{r["style"]}</td><td>{r["count"]}</td>'
+        f'<tr><td>{_esc(r["situation"])}</td><td>{_esc(r["style"])}</td><td>{r["count"]}</td>'
         f'<td><form action="/style/delete/{r["id"]}" method="post" style="display:inline">'
         f'<button class="del-btn">删除</button></form></td></tr>'
         for r in rows
@@ -555,7 +578,7 @@ async def style_page():
         <table><tr><th>场景</th><th>表达方式</th><th>次数</th><th></th></tr>{items}</table>
     </div>
     <div class="card"><h2>📝 整体风格描述（style_profile）</h2>
-        <div class="hint">{sp or '（暂无）'}</div>
+        <div class="hint">{_esc(sp) or '（暂无）'}</div>
     </div>
     """
     return _page("风格管理", content, "style")
@@ -578,8 +601,8 @@ async def stickers_page():
         return _page("表情管理", "<p>暂无用户数据</p>", "stick")
     rows = _q("SELECT * FROM stickers WHERE user_id=? ORDER BY count DESC, id DESC", (uid,))
     items = "".join(
-        f'<tr><td>{r["id"]}</td><td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">{r["desc"][:80]}</td>'
-        f'<td>{r["emotion"] or "-"}</td><td>{r["count"]}</td></tr>'
+        f'<tr><td>{r["id"]}</td><td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">{_esc(r["desc"][:80])}</td>'
+        f'<td>{_esc(r["emotion"] or "-")}</td><td>{r["count"]}</td></tr>'
         for r in rows
     )
     content = f"""
@@ -600,7 +623,7 @@ async def chat_page():
     rows.reverse()
     msgs = "".join(
         f'<div class="msg {"msg-user" if r["role"]=="user" else "msg-bot"}">'
-        f'<div class="meta">{"你" if r["role"]=="user" else "菟菚"} · {r["ts"]}</div>{r["content"]}</div>'
+        f'<div class="meta">{"你" if r["role"]=="user" else "菟菚"} · {_esc(r["ts"])}</div>{_esc(r["content"])}</div>'
         for r in rows
     )
     content = f"""
@@ -613,7 +636,7 @@ async def chat_page():
 @app.get("/logs", response_class=HTMLResponse)
 async def logs_page():
     lines = []
-    for name in ("bot.out.log", "bot.err.log", "watchdog.log"):
+    for name in ("bot.log", "bot.err.log", "bot.out.log", "watchdog.log"):
         p = config.data_dir / name
         if p.exists():
             try:
@@ -623,7 +646,7 @@ async def logs_page():
                 pass
     content = f"""
     <div class="card"><h2>📋 日志（最近 60 行）</h2>
-        <div class="logs">{chr(10).join(lines)}</div>
+        <div class="logs">{_esc(chr(10).join(lines))}</div>
     </div>
     """
     return _page("日志", content, "logs")
@@ -651,7 +674,7 @@ async def system_page():
     user_rows = ""
     if u:
         user_rows = "".join(
-            f"<tr><td>{k}</td><td>{v if v is not None else '—'}</td></tr>"
+            f"<tr><td>{_esc(k)}</td><td>{_esc(v) if v is not None else '—'}</td></tr>"
             for k, v in u.items() if k not in ("user_id",)
         )
     version = "v1.1.1"

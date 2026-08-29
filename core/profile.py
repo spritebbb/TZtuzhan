@@ -53,12 +53,16 @@ def _parse_json(resp: str) -> dict:
     return json.loads(text)
 
 
-def profile_prompt_text(user_id: str) -> str:
-    """构建注入 system prompt 的画像描述文本；无画像返回空串。"""
+def profile_prompt_text(user_id: str, max_items: int = 15) -> str:
+    """构建注入 system prompt 的画像描述文本；无画像返回空串。
+
+    max_items 限制注入条数，防止画像积累过多把 system prompt 撑爆。
+    """
     rows = db.get_profile(user_id)
     if not rows:
         return ""
-    # 按分类分组
+    # 按分类分组（每类限 max_items/6 条左右，总量不超过 max_items）
+    per_cat = max(1, max_items // 6)
     groups: dict[str, list[str]] = {}
     for r in rows:
         groups.setdefault(r["category"], []).append(r["content"])
@@ -68,7 +72,7 @@ def profile_prompt_text(user_id: str) -> str:
         if not items:
             continue
         label = _CATEGORY_LABELS.get(cat, cat)
-        lines.append(f"{label}：" + "；".join(items))
+        lines.append(f"{label}：" + "；".join(items[:per_cat]))
     return "你记得的关于对方的事：\n" + "\n".join(lines)
 
 

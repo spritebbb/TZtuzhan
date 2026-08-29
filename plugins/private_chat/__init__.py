@@ -515,7 +515,7 @@ async def handle_profile(event: PrivateMessageEvent):
         if not cat:
             await profile_cmd.finish(Message("分类要用：喜好/厌恶/习惯/性格/基本信息/其他"))
             return
-        content = f"用户{m_add.group(2).strip()}"[:80]
+        content = m_add.group(2).strip()[:80]
         rid = db.add_profile(uid, cat, content, "manual")
         await profile_cmd.finish(Message(f"嗯，记下了。" if rid is not None else "这条我已经知道了～"))
         return

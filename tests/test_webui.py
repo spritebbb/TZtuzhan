@@ -114,3 +114,28 @@ def test_nav_has_all_links():
     r = client.get("/")
     for path in ALL_PAGES:
         assert f'href="{path}"' in r.text, f"导航应包含 {path}"
+
+
+def test_dates_add_rejects_invalid():
+    # 非法日期不应入库（但不应崩溃）
+    if not _UID:
+        pytest.skip("无用户数据")
+    r = client.post("/dates/add", data={"date": "13-40", "label": "坏日期测试", "kind": "other", "year": "2024"})
+    assert r.status_code in (200, 302)
+    row = webui._q1("SELECT id FROM important_dates WHERE user_id=? AND label='坏日期测试'", (_UID,))
+    assert row is None, "非法日期不应入库"
+
+
+def test_terms_regex_no_false_positive():
+    # "草莓""6点" 不应被当作口头禅捕获（单字/数字噪声已移除）
+    from core.terms import capture_from_message
+    hits = capture_from_message("我今天买了草莓，6点下班")
+    assert "草" not in hits and "6" not in hits
+
+
+def test_sticker_emotion_no_false_positive():
+    # "快乐""睡眠" 不应误判（单字关键词已移除）
+    from core.sticker import guess_emotions
+    assert "开心" not in guess_emotions("一个快乐的小狗在奔跑")
+    assert "困倦" not in guess_emotions("充足的睡眠很重要")
+    assert "开心" in guess_emotions("一张哈哈大笑的表情")

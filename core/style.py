@@ -73,9 +73,11 @@ async def extract_style_map(user_id: str, *, rows=None, done=0) -> bool:
         data = json.loads(text)
     except Exception:
         logger.exception("[风格] {} 提炼失败", user_id)
+        db.set_last_profile_msg_id(user_id, done)
         return False
 
     if not isinstance(data, dict):
+        db.set_last_profile_msg_id(user_id, done)
         return False
     for item in data.get("styles") or []:
         if not isinstance(item, dict):
@@ -84,6 +86,7 @@ async def extract_style_map(user_id: str, *, rows=None, done=0) -> bool:
         st = str(item.get("style", "")).strip()[:60]
         if s and st:
             db.add_style_map(user_id, s, st)
+    db.set_last_profile_msg_id(user_id, done)
     return True
 
 

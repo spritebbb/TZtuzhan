@@ -44,7 +44,7 @@ def flag(name: str) -> bool:
 
 
 def set_flag(name: str, value: bool) -> None:
-    """写入开关值（同时清缓存）。"""
+    """写入开关值（同时清缓存）；原子写避免读到半截 JSON。"""
     if name not in FLAG_DEFAULTS:
         return  # 只接受已知开关名
     data = {}
@@ -55,7 +55,10 @@ def set_flag(name: str, value: bool) -> None:
         except (json.JSONDecodeError, OSError):
             data = {}
     data[name] = bool(value)
-    _FLAGS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 原子写：写临时文件再替换，防止并发读读到损坏 JSON
+    tmp = _FLAGS_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(_FLAGS_PATH)
     _cache["data"] = data
     _cache["ts"] = time.time()
 

@@ -146,10 +146,24 @@ def trim_farewell(user_text: str, reply: str) -> str:
 
 
 async def _extract_profile_and_terms(user_id: str) -> None:
-    """画像 + 口头禅 + 场景风格同批提炼（共用游标，一次取消息、三次 LLM 并行、一次推进游标）。"""
+    """画像 + 口头禅 + 场景风格同批提炼（共用游标，一次取消息、LLM 并行、一次推进游标）。
+
+    各功能按开关独立控制：关掉的就不提炼（省 LLM 调用，也不积累数据）。
+    """
+    from .features import flag
     from .profile import extract_profile
     from .style import extract_style_map
     from .terms import extract_terms
+
+    tasks = []
+    if flag("profile_enabled"):
+        tasks.append(extract_profile)
+    if flag("terms_enabled"):
+        tasks.append(extract_terms)
+    if flag("style_enabled"):
+        tasks.append(extract_style_map)
+    if not tasks:
+        return
 
     # 取一次消息（画像/口头禅/风格共享）
     last_id = db.get_last_profile_msg_id(user_id)
@@ -159,11 +173,7 @@ async def _extract_profile_and_terms(user_id: str) -> None:
     done = rows[-1]["id"]
     import asyncio
 
-    await asyncio.gather(
-        extract_profile(user_id, rows=rows, done=done),
-        extract_terms(user_id, rows=rows, done=done),
-        extract_style_map(user_id, rows=rows, done=done),
-    )
+    await asyncio.gather(*[fn(user_id, rows=rows, done=done) for fn in tasks])
 
 
 async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bool = False) -> str:

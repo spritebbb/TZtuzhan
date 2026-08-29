@@ -5,3 +5,4 @@ python-dotenv>=1.0.0
 ddgs>=9.0.0
 zhdate>=0.1
 Pillow>=10.0.0
+python-multipart>=0.0.9  # Web 管理面板表单解析（python webui.py）

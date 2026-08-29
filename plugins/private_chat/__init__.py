@@ -404,10 +404,40 @@ async def handle_mood(event: PrivateMessageEvent):
             # 调试：手动设置心情值
             mood_mod.update_mood(uid, int(clean) - mood_mod.current_mood(uid, city=config.mood_city)[0], city=config.mood_city)
             await mood_cmd.finish(Message("已设置 -> " + mood_mod.describe(uid, city=config.mood_city)))
-        await mood_cmd.finish(Message("当前 " + mood_mod.describe(uid, city=config.mood_city)))
+        await _finish_mood_card(mood_cmd, uid)
     except Exception:
         logger.exception("[心情] 查询失败")
         await mood_cmd.finish(Message("心情系统暂时没反应……过会儿再问我吧"))
+
+
+async def _finish_mood_card(matcher, uid: str, prefix: str = "当前 ") -> None:
+    """发心情图片卡片；渲染失败回退纯文本。"""
+    from core import mood as mood_mod
+    from core.cards import render_mood_card
+    from core.config import config
+
+    try:
+        mood, _ = mood_mod.current_mood(uid, city=config.mood_city)
+        label, desc = mood_mod.mood_label(mood)
+        weather = ""
+        if config.mood_city:
+            try:
+                w, base = mood_mod.today_weather(config.mood_city)
+                weather = f"今日天气：{w} · 基线 {base}"
+            except Exception:
+                weather = ""
+        png = render_mood_card(mood=mood, label=label, desc=desc, weather=weather)
+        if png:
+            try:
+                from core.message_build import image_bytes
+
+                await matcher.finish(Message(prefix + MessageSegment.image(file=image_bytes(png))))
+                return
+            except Exception:
+                logger.exception("[心情] 卡片发送失败，回退文本")
+    except Exception:
+        logger.exception("[心情] 卡片渲染失败，回退文本")
+    await matcher.finish(Message(prefix + mood_mod.describe(uid, city=config.mood_city)))
 
 
 @schedule_cmd.handle()
@@ -417,10 +447,26 @@ async def handle_schedule(event: PrivateMessageEvent):
     uid = str(event.user_id)
     try:
         from core.config import config
-        from core.schedule import describe as schedule_describe, ensure_schedule
+        from core.schedule import describe as schedule_describe, ensure_schedule, build_schedule
 
         # 优先让 LLM 生成当日日程（失败自动退回规则模板）
         await ensure_schedule(uid, city=config.mood_city)
+        # 发图片卡片
+        from core.schedule import _weather_kind
+        from core.cards import render_schedule_card
+
+        sched = build_schedule(uid, city=config.mood_city)
+        weather = _weather_kind(config.mood_city)
+        head = "今天我是这样安排哒" + (f"（外面：{weather}）" if weather else "")
+        png = render_schedule_card(items=sched, head=head)
+        if png:
+            try:
+                from core.message_build import image_bytes
+
+                await schedule_cmd.finish(Message(MessageSegment.image(file=image_bytes(png))))
+                return
+            except Exception:
+                logger.exception("[日程] 卡片发送失败，回退文本")
         await schedule_cmd.finish(Message(schedule_describe(uid, city=config.mood_city)))
     except Exception:
         logger.exception("[日程] 查询失败")
@@ -436,12 +482,43 @@ async def handle_aff(event: PrivateMessageEvent):
     # 无参数，或含"查看/查询/当前"等词（含括号写法如（查看当前））→ 显示当前
     clean = text.strip("（）()[]【】。")
     if not clean or any(k in clean for k in ("查看", "看", "查询", "当前", "是多少", "多少")):
-        await aff_cmd.finish(Message("当前 " + affection.describe(uid)))
+        await _finish_affection_card(aff_cmd, event, uid)
+        return
     try:
         affection.set_affection(uid, int(text))
-        await aff_cmd.finish(Message("已设置 -> " + affection.describe(uid)))
+        await _finish_affection_card(aff_cmd, event, uid, prefix="已设置 -> ")
     except ValueError:
         await aff_cmd.finish(Message("用法：/好感 80 或 /好感（查看当前），也可用 /aff"))
+
+
+async def _finish_affection_card(matcher, event, uid: str, prefix: str = "当前 ") -> None:
+    """发好感度图片卡片；渲染失败回退纯文本。"""
+    from core.cards import render_affection_card
+
+    u = affection.db.get_user(uid)
+    if not u:
+        await matcher.finish(Message("尚未有记录"))
+        return
+    aff = u["affection"]
+    stage = affection.stage_of(aff)
+    bl = affection.bond_level(aff)
+    next_threshold = None
+    for t, _s in affection.STAGE_THRESHOLDS:
+        if t > aff:
+            next_threshold = t
+            break
+    png = render_affection_card(
+        user_id=uid, affection=aff, stage=stage, next_threshold=next_threshold, bond=bl
+    )
+    if png:
+        try:
+            from core.message_build import image_bytes
+
+            await matcher.finish(Message(prefix + MessageSegment.image(file=image_bytes(png))))
+            return
+        except Exception:
+            logger.exception("[好感] 卡片发送失败，回退文本")
+    await matcher.finish(Message(prefix + affection.describe(uid)))
 
 
 @search_cmd.handle()

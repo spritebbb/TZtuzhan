@@ -60,3 +60,32 @@ def test_weather_and_mood_safe():
     """带城市/不带城市的生成都不报错（天气/心情调剂健壮）。"""
     assert schedule.build_schedule(uid, city="襄阳")
     assert schedule.build_schedule(uid, city="")
+
+
+def test_special_day_schedule_not_repetitive():
+    """特殊日子只应注入契合的时段，其余时段保持正常——不能 6 段全变成同一句。
+
+    回归：曾出现 6 段全部是"今天是个特别的日子……我想只跟你分享。"的 bug。
+    """
+    from datetime import date
+
+    from core.userdb import save_important_date
+
+    # 给该测试用户造一个今天的特殊日子
+    today = date.today().strftime("%m-%d")
+    save_important_date(uid, today, "测试特别日子")
+    # 清掉今日缓存，强制走规则模板
+    for row in db.conn.execute(
+        "SELECT key FROM kv_store WHERE user_id=? AND key LIKE 'schedule:%'", (uid,)
+    ).fetchall():
+        db.conn.execute("DELETE FROM kv_store WHERE user_id=? AND key=?", (uid, row["key"]))
+    db.conn.commit()
+
+    s = schedule._rule_schedule(uid)
+    todos = [x["todo"] for x in s]
+    # 6 段不应相同；且"特别日子"文案只出现一次
+    assert len(set(todos)) >= 5, f"特殊日子日程过于重复: {todos}"
+    special_count = sum(1 for t in todos if "特别" in t)
+    assert special_count <= 2, f"特别文案注入过多: {special_count}"
+    # 应至少有一段是完全正常的日常作息（不含"特别"）
+    assert any("特别" not in t for t in todos), "应有正常作息时段"

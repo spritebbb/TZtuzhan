@@ -172,7 +172,11 @@ async def _generate_via_llm(user_id: str, *, city: str = "") -> list[dict] | Non
 
 
 def _rule_schedule(user_id: str, *, city: str = "") -> list[dict]:
-    """规则版日程（兜底）：按好感度阶段选模板 + 天气/心情调剂。"""
+    """规则版日程（兜底）：按好感度阶段选模板 + 天气/心情调剂。
+
+    特殊日子/节日的"特别安排"只注入最契合的 1 个时段（晚上），
+    其余时段保持正常作息——避免 6 段全变成同一句"今天是个特别的日子"。
+    """
     stage = _stage_of(user_id)
     base_schedule = _SCHEDULE_BY_STAGE.get(stage, _SCHEDULE_BY_STAGE[_DEFAULT_STAGE])
 
@@ -188,18 +192,26 @@ def _rule_schedule(user_id: str, *, city: str = "") -> list[dict]:
     special = _special_kind(user_id)
     festivals = _today_festivals()
 
+    # 特殊日子的特别安排：只加在"晚上"这一个时段（晚上最想跟对方分享），
+    # 其余时段照常，避免全天重复同一句。
+    special_period = "晚上"
+    special_flavor = _SPECIAL_FLAVOR.get(special, "") if special else ""
+    special_tail = "今天这份特别，我想只跟你分享。" if special else ""
+
     schedule: list[dict] = []
     for period, base in base_schedule:
         parts = [base]
-        if special:
-            parts.insert(0, _SPECIAL_FLAVOR.get(special, ""))
-            parts.append("今天这份特别，我想只跟你分享。")
-        elif festivals:
+        if special and period == special_period:
+            if special_flavor:
+                parts.insert(0, special_flavor)
+            if special_tail:
+                parts.append(special_tail)
+        elif not special and festivals:
             # 节日氛围只加在最契合的时段（如中秋→晚上），其余时段保持日常
             f_period, f_flavor = _FESTIVAL_FLAVOR.get(festivals[0], ("", ""))
             if f_flavor and period == f_period:
                 parts.append(f_flavor)
-        elif weather:
+        elif not special and weather:
             parts.append(_WEATHER_FLAVOR.get(weather, ""))
         desc = "，".join(p for p in parts if p)
         schedule.append({"period": period, "todo": desc})

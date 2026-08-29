@@ -68,6 +68,16 @@ def image_file(file_path: str) -> str:
     return uri
 
 
+def image_bytes(data: bytes) -> str:
+    """把图片字节（PNG/JPEG/GIF）编码成 base64 的 file 参数，供 CQ 图片段直接发送。
+
+    MessageSegment.image(file=image_bytes(png_bytes)) —— 免落盘、免路径解析。
+    """
+    import base64
+
+    return "base64://" + base64.b64encode(data).decode("ascii")
+
+
 def retcode_1200(exc: Exception) -> bool:
     """判断异常是否是 NapCat 的"消息体无法解析"(retcode=1200)。"""
     return "1200" in str(exc) or "retcode=1200" in str(exc)

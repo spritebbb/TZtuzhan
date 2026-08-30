@@ -1,118 +1,118 @@
 @echo off
 chcp 65001 >nul
-title TZtuzhan One-Click Installer
+title 菟菚 QQ Bot 一键安装向导
 echo ==========================================
-echo   TZtuzhan QQ Bot - One-Click Install
+echo   菟菚 QQ Bot 一键安装
 echo ==========================================
 echo.
 
 set "ROOT=%~dp0"
 cd /d "%ROOT%"
 
-REM === 1. Check Python ===
-echo [1/5] Checking Python ...
+REM === 1. 检测 Python ===
+echo [1/5] 正在检测 Python ...
 set "PY=py"
 py -3 --version >nul 2>&1
 if %ERRORLEVEL%==0 (
     for /f "delims=" %%v in ('py -3 --version 2^>^&1') do set "PYVER=%%v"
-    echo   [OK] Found Python: %PYVER%
+    echo   [OK] 已找到 Python：%PYVER%
 ) else (
     python --version >nul 2>&1
     if %ERRORLEVEL%==0 (
         for /f "delims=" %%v in ('python --version 2^>^&1') do set "PYVER=%%v"
-        echo   [OK] Found Python: %PYVER%
+        echo   [OK] 已找到 Python：%PYVER%
         set "PY=python"
     ) else (
-        echo   [X] Python not found!
-        echo   Please install Python 3.10+ from https://www.python.org/downloads/
-        echo   and check "Add python.exe to PATH" during install
+        echo   [X] 未找到 Python！
+        echo   请先安装 Python 3.10+：https://www.python.org/downloads/
+        echo   安装时务必勾选「Add python.exe to PATH」
         echo.
-        echo   After installing, run this script again.
+        echo   安装完成后重新运行本脚本即可。
         pause
         exit /b 1
     )
 )
 
-REM === 2. Create venv ===
-echo [2/5] Creating virtual environment ...
+REM === 2. 创建虚拟环境 ===
+echo [2/5] 正在创建虚拟环境 ...
 if exist ".venv\Scripts\python.exe" (
-    echo   [OK] venv already exists
+    echo   [OK] 虚拟环境已存在
 ) else (
     %PY% -m venv --without-pip .venv
     if errorlevel 1 (
-        echo   [X] Failed to create venv
+        echo   [X] 创建虚拟环境失败
         pause
         exit /b 1
     )
     %PY% -m pip --python ".venv\Scripts\python.exe" install --upgrade pip
-    echo   [OK] venv created
+    echo   [OK] 虚拟环境创建完成
 )
 
-REM === 3. Install dependencies ===
-echo [3/5] Installing dependencies (this may take 1-3 min) ...
+REM === 3. 安装依赖 ===
+echo [3/5] 正在安装依赖（约需 1-3 分钟）...
 set "IDX="
 echo.
-echo   Select pip source:
-echo     1) Official PyPI (default)
-echo     2) Tsinghua mirror (faster in China)
-set /p SRC="Your choice (1/2, default 1): "
+echo   请选择 pip 下载源：
+echo     1）官方 PyPI（默认）
+echo     2）清华镜像（国内更快）
+set /p SRC="请选择（1/2，默认 1）："
 if "%SRC%"=="2" set "IDX=-i https://pypi.tuna.tsinghua.edu.cn/simple"
-echo   Installing with: %IDX%
+echo   正在安装：%IDX%
 %PY% -m pip --python ".venv\Scripts\python.exe" install -r requirements.txt %IDX%
 if errorlevel 1 (
-    echo   [X] Dependency install failed.
-    echo   Tip: network issue? Run again and choose Tsinghua mirror.
+    echo   [X] 依赖安装失败
+    echo   提示：网络问题？重新运行并选择清华镜像试试。
     pause
     exit /b 1
 )
-echo   [OK] Dependencies installed
+echo   [OK] 依赖安装完成
 
-REM === 4. Prepare .env ===
-echo [4/5] Preparing .env ...
+REM === 4. 准备 .env 配置 ===
+echo [4/5] 正在准备 .env ...
 if exist ".env" (
-    echo   [OK] .env already exists - will keep it
+    echo   [OK] .env 已存在，保留现有配置
 ) else (
     copy /y ".env.example" ".env" >nul
-    echo   [OK] Created .env from template
+    echo   [OK] 已从模板生成 .env
 )
 
-echo   Checking BOT_QQ and generating NapCat config ...
+echo   正在检查 BOT_QQ 并生成 NapCat 配置 ...
 if exist ".venv\Scripts\python.exe" (
     ".venv\Scripts\python.exe" tools_gen_napcat_config.py
     if errorlevel 1 (
-        echo   [WARN] NapCat config generation had an issue
+        echo   [WARN] NapCat 配置生成出现问题
     )
 )
 
 echo.
-echo   *** IMPORTANT ***
-echo   Edit ".env" now and fill:
-echo     - LLM_API_KEY  (required for chat, get from DeepSeek/SiliconFlow etc.)
-echo     - BOT_QQ       (your bot QQ small account, for NapCat quick login)
-echo     - other keys as needed (Vision/Image/Search/MOOD_CITY)
+echo   *** 重要提示 ***
+echo   请编辑 ".env" 文件，填入以下配置：
+echo     - LLM_API_KEY  对话必备（DeepSeek / SiliconFlow 等平台申请）
+echo     - BOT_QQ       你的 bot 小号 QQ（NapCat 快速登录用）
+echo     - 其他可选：识图 / 生图 / 搜索 / 心情城市 等
 echo.
-echo   Open with notepad:  notepad ".env"
-echo   Press any key after editing...
+echo   用记事本打开：  notepad ".env"
+echo   编辑完成后按任意键继续...
 pause >nul
 
-REM === 5. Check NapCat ===
-echo [5/5] Checking NapCat ...
+REM === 5. 检查 NapCat ===
+echo [5/5] 正在检查 NapCat ...
 if exist "Napcat\NapCat.Shell.Windows.Node\napcat\launcher.bat" (
-    echo   [OK] NapCat found
+    echo   [OK] 已找到 NapCat
 ) else (
-    echo   [WARN] NapCat not found in this folder.
-    echo   Download NapCat from https://github.com/NapNeko/NapCatQQ/releases
-    echo   and place it under:  Napcat\NapCat.Shell.Windows.Node\
+    echo   [WARN] 本目录未找到 NapCat。
+    echo   请从 https://github.com/NapNeko/NapCatQQ/releases 下载
+    echo   并解压到：  Napcat\NapCat.Shell.Windows.Node\
 )
 
 echo.
 echo ==========================================
-echo   Install complete!
+echo   安装完成！
 echo.
-echo   Next steps:
-echo     1) Edit .env  (fill LLM_API_KEY, BOT_QQ if you have)
-echo     2) Install QQ on this PC (needed by NapCat), login once
-echo     3) Run  start-all.bat  to launch NapCat + Bot + WebUI
-echo        WebUI panel:  http://127.0.0.1:8800
+echo   接下来：
+echo     1）编辑 .env（填 LLM_API_KEY、BOT_QQ）
+echo     2）本机安装 QQ 客户端，并登录 bot 小号一次
+echo     3）双击 start-all.bat 启动 NapCat + Bot + WebUI
+echo        管理面板：http://127.0.0.1:8800
 echo ==========================================
 pause

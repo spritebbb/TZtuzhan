@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Deployment helper: generate NapCat onebot11 forward-WS config for BOT_QQ.
+"""部署辅助脚本：为 BOT_QQ 生成 NapCat onebot11 正向 WS 配置。
 
-Reads .env (BOT_QQ), writes Napcat/.../napcat/config/onebot11_<BOT_QQ>.json
-so the bot can connect on ws://127.0.0.1:3001 out of the box.
+读取 .env（BOT_QQ），写入 Napcat/.../napcat/config/onebot11_<BOT_QQ>.json，
+让 bot 开箱即可连接 ws://127.0.0.1:3001。
 
-No secret values are written except an empty token placeholder; the user may
-edit token later. If BOT_QQ is empty, prints a warning and exits 0 (user can
-set it in .env and rerun install).
+除空的 token 占位符外不写入任何密钥；用户可稍后自行编辑 token。
+若 BOT_QQ 为空，打印提示并以 0 退出（用户可在 .env 填写后重新运行 install）。
 """
 import json
 import re
@@ -34,12 +33,12 @@ def main() -> int:
     env = _read_env()
     bot_qq = env.get("BOT_QQ", "").strip()
     if not bot_qq:
-        print("[gen-napcat] WARN: BOT_QQ empty in .env - skipping onebot11 config generation.")
-        print("[gen-napcat] Set BOT_QQ=<your bot QQ> in .env, then rerun install.bat")
-        print("[gen-napcat] (or configure the OneBot11 forward WS server in NapCat WebUI manually)")
+        print("[配置生成] 提示：.env 中 BOT_QQ 为空 - 跳过 onebot11 配置生成。")
+        print("[配置生成] 请在 .env 中填写 BOT_QQ=<你的 bot QQ>，然后重新运行 install.bat")
+        print("[配置生成] 或手动在 NapCat WebUI 中开启 OneBot11 正向 WS 服务")
         return 0
     if not re.fullmatch(r"\d{5,12}", bot_qq):
-        print(f"[gen-napcat] WARN: BOT_QQ '{bot_qq}' does not look like a QQ number - skipping.")
+        print(f"[配置生成] 提示：BOT_QQ '{bot_qq}' 看起来不是合法 QQ 号 - 已跳过。")
         return 0
 
     config_dir = ROOT / "Napcat" / "NapCat.Shell.Windows.Node" / "napcat" / "config"
@@ -75,8 +74,8 @@ def main() -> int:
         "timeout": {"baseTimeout": 30000, "uploadSpeedKBps": 256, "downloadSpeedKBps": 256, "maxTimeout": 120000},
     }
     target.write_text(json.dumps(onebot, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[gen-napcat] OK: wrote {target}")
-    print("[gen-napcat] OneBot11 forward WS server enabled on port 3001 (ws://127.0.0.1:3001)")
+    print(f"[配置生成] 成功：已写入 {target}")
+    print("[配置生成] OneBot11 正向 WS 服务已开启，端口 3001（ws://127.0.0.1:3001）")
     return 0
 
 

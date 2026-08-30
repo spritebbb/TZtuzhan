@@ -1,94 +1,94 @@
 @echo off
 chcp 65001 >nul
-title TZtuzhan Auto-Update
+title 菟菚 QQ Bot 自动更新
 setlocal enabledelayedexpansion
 
 set "ROOT=%~dp0"
 cd /d "%ROOT%"
 
-REM Quiet mode: pass "quiet" as 2nd arg (e.g. from start-all.bat) to skip pause
+REM 静默模式：第 2 个参数传 "quiet"（例如 start-all.bat 调用时）可跳过暂停
 set "QUIET=0"
 if "%2"=="quiet" set "QUIET=1"
 
 echo ==========================================
-echo   TZtuzhan Auto-Update from GitHub
+echo   菟菚 QQ Bot 自动更新
 echo ==========================================
 echo.
 
-REM === 1. Check git ===
-echo [1/4] Checking git ...
+REM === 1. 检测 git ===
+echo [1/4] 正在检测 git ...
 git --version >nul 2>&1
 if !ERRORLEVEL! NEQ 0 (
-    echo   [X] git not found!
-    echo   Please install git from https://git-scm.com/download/win
-    echo   and check "Git from the command line" during install
+    echo   [X] 未找到 git！
+    echo   请先安装 git：https://git-scm.com/download/win
+    echo   安装时勾选「Git from the command line」
     if !QUIET!==0 pause
     exit /b 1
 )
-echo   [OK] git found
+echo   [OK] 已找到 git
 
-REM === 2. Choose branch (default: main; pass "dev" for dev branch) ===
+REM === 2. 选择分支（默认 main；传 "dev" 用开发分支）===
 set "BRANCH=main"
 if not "%1"=="" set "BRANCH=%1"
-echo   Branch: %BRANCH%
+echo   更新分支：%BRANCH%
 
-REM === 3. Init git if needed (deployment package has no .git) ===
-echo [2/4] Setting up git repository ...
+REM === 3. 初始化 git（部署包没有 .git 时）===
+echo [2/4] 正在设置 git 仓库 ...
 if not exist ".git" (
-    echo   [..] No .git found - deployment package. Initializing ...
+    echo   [..] 未找到 .git（部署包），正在初始化 ...
     git init
     git remote add origin https://github.com/spritebbb/TZtuzhan.git
     if !ERRORLEVEL! NEQ 0 (
-        echo   [X] Failed to init git
+        echo   [X] 初始化 git 失败
         if !QUIET!==0 pause
         exit /b 1
     )
-    echo   [OK] Repository initialized
+    echo   [OK] 仓库初始化完成
 ) else (
-    echo   [OK] .git exists
+    echo   [OK] .git 已存在
 )
 
-REM === 4. Fetch and reset to remote ===
-echo [3/4] Fetching updates from GitHub (%BRANCH%) ...
+REM === 4. 拉取并更新到远程分支 ===
+echo [3/4] 正在从 GitHub 拉取更新（%BRANCH%）...
 git fetch origin --tags
 if !ERRORLEVEL! NEQ 0 (
-    echo   [X] Fetch failed. Check your network / proxy settings.
+    echo   [X] 拉取失败。请检查网络 / 代理设置。
     if !QUIET!==0 pause
     exit /b 1
 )
 
-echo   Updating to origin/%BRANCH% ...
+echo   正在更新到 origin/%BRANCH% ...
 git checkout -f -B %BRANCH% origin/%BRANCH%
 if !ERRORLEVEL! NEQ 0 (
-    echo   [X] Checkout failed.
+    echo   [X] 更新失败。
     if !QUIET!==0 pause
     exit /b 1
 )
 
-echo   Current version:
+echo   当前版本：
 for /f "delims=" %%v in ('git describe --tags --always 2^>nul') do echo   %%v
 
-REM === 5. Update pip dependencies ===
-echo [4/4] Updating Python dependencies ...
+REM === 5. 更新 Python 依赖 ===
+echo [4/4] 正在更新 Python 依赖 ...
 if exist ".venv\Scripts\python.exe" (
     ".venv\Scripts\python.exe" -m pip install -r requirements.txt
     if !ERRORLEVEL! NEQ 0 (
-        echo   [WARN] pip install failed. Run install.bat to retry with mirror.
+        echo   [WARN] 依赖更新失败。可运行 install.bat 选择镜像重试。
     ) else (
-        echo   [OK] Dependencies updated
+        echo   [OK] 依赖更新完成
     )
 ) else (
-    echo   [WARN] .venv not found. Run install.bat first.
+    echo   [WARN] 未找到 .venv，请先运行 install.bat
 )
 
 echo.
 echo ==========================================
-echo   Update complete!
-echo   - .env / data / Napcat / .venv preserved
-echo   - Restart bot (start-all.bat) to apply
+echo   更新完成！
+echo   - 已保留 .env / data / Napcat / .venv
+echo   - 重新运行 start-all.bat 使更新生效
 echo ==========================================
 echo.
-echo   Tip: update.bat dev  -- pull from dev branch
-echo        update.bat main -- pull from main branch (default)
+echo   用法：update.bat dev  —— 拉取 dev 分支
+echo         update.bat main —— 拉取 main 分支（默认）
 echo.
 if !QUIET!==0 pause

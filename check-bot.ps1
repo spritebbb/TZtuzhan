@@ -1,4 +1,4 @@
-# 菟菚 bot 健康自检
+﻿# 菟菚 bot 健康自检
 # 用法: powershell -ExecutionPolicy Bypass -File check-bot.ps1
 # 退出码: 0 = 健康; 1 = 有异常（重复进程/未连接等）
 $ErrorActionPreference = 'SilentlyContinue'

@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import uvicorn
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 
 from core.config import config
 from core.features import all_flags, set_flag, FLAG_DEFAULTS
@@ -108,6 +108,8 @@ h2{font-size:1.1rem;color:#c4b5fd;margin-bottom:12px;}
 .nav a:hover{background:#334155;color:#e2e8f0;}
 .nav a.active{background:#7c3aed;color:#fff;}
 .card{background:#1e293b;border-radius:12px;padding:16px;margin-bottom:16px;}
+.persona-banner{text-align:center;margin-bottom:16px;}
+.persona-photo{max-width:220px;border-radius:12px;border:2px solid #334155;box-shadow:0 4px 20px rgba(0,0,0,0.4);}
 .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;}
 .stat-item{background:#334155;border-radius:8px;padding:12px;text-align:center;}
 .stat-item .val{font-size:1.4rem;font-weight:bold;color:#a78bfa;}
@@ -205,6 +207,16 @@ def _esc(s) -> str:
 # ---- FastAPI ----
 app = FastAPI(title="菟菚管理面板")
 
+# 人设图：返回 assets/persona.png（找不到时返回 404）
+_PERSONA_IMG = Path(__file__).resolve().parent / "assets" / "persona.png"
+
+
+@app.get("/persona")
+async def persona_image():
+    if _PERSONA_IMG.exists():
+        return FileResponse(_PERSONA_IMG, media_type="image/png")
+    return JSONResponse({"ok": False, "error": "人设图未找到"}, status_code=404)
+
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
@@ -241,6 +253,9 @@ async def dashboard():
     next_s = _next_stage(aff)
     bar_w = max(3, min(100, aff))
     content = f"""
+    <div class="persona-banner">
+        <img class="persona-photo" src="/persona" alt="菟菚人设图">
+    </div>
     <div class="card">
         <h2>👤 {_esc(uid)} · {_esc((u.get('nickname_pref') or '') or '未设置称呼')} · {_esc((u.get('style_profile') or '')[:40])}</h2>
         <div class="stats">{stat_html}</div>

@@ -67,14 +67,28 @@ _ABUSE_WORDS_NEED_CONTEXT = {
 # 英文辱骂词（词界匹配，避免「asb」「sbxi」等子串误伤）
 _ABUSE_EN_WORDS = ("sb", "cnm", "fuck", "shit", "bitch")
 
+# 辱骂词指向"别人"时的对象词：当辱骂词和目标对象词同时出现，判断不是在骂菟菚。
+# 例子：「傻逼领导」「妈的，那领导...」「sb同事」——骂的是对方，不该扣菟菚好感。
+# 注意：不放单字「他/她/它/这/那」（太常见，会误伤「他妈的」这类真粗口/对菟菚的辱骂）。
+_ABUSE_OTHER_TARGET = (
+    "领导", "老板", "老师", "同事", "同学", "他们", "她们",
+    "主任", "经理", "主管", "组长", "班长", "这货", "那货", "这家伙",
+    "学校", "公司", "单位", "客户", "甲方", "客服", "boss", "leader", "sb领导", "sb同事",
+)
+
 
 def check_abuse(text: str) -> bool:
     lowered = text.lower()
-    # 中文多字词：命中即算，但对易误伤词检查上下文白名单
+    # ① 若辱骂词指向的是"别人"（骂的对象不是菟菚），不判为辱骂菟菚。
+    #    规则：整个消息里同时出现了辱骂词 + 其他对象词 → 视为在骂别人，跳过。
+    #    注意：不能只看辱骂词后面，因「傻逼领导」「他妈的」顺序可能相反或跨句。
+    if any(t in lowered for t in _ABUSE_OTHER_TARGET):
+        return False
+    # ② 中文多字词：命中即算，但对易误伤词检查上下文白名单
     for w in ABUSE_WORDS:
         if w in lowered and not any(b in lowered for b in _ABUSE_WORDS_NEED_CONTEXT.get(w, ())):
             return True
-    # 英文词：词界匹配，避免子串误伤
+    # ③ 英文词：词界匹配，避免子串误伤
     import re
 
     for w in _ABUSE_EN_WORDS:

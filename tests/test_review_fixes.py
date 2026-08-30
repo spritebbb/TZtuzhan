@@ -108,8 +108,8 @@ def test_memes_proxy_fallback():
             # 直接测 _sync_fetch 里的 opener 构造：抓 weibo 失败也静默返回 []
             result = asyncio_run_weibo(memes)
             assert result == []
-            # 无环境代理时回退本地 mihomo
-            assert captured["proxy"] == {"http": "http://127.0.0.1:10090", "https": "http://127.0.0.1:10090"}
+            # 无环境代理时直连（空代理表，不硬编码本地 mihomo）——GitHub 用户无代理也能用
+            assert captured["proxy"] == {}
 
 
 def asyncio_run_weibo(memes):

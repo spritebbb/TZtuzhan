@@ -103,11 +103,12 @@ async def _fetch_weibo_hot() -> list[str]:
 
     def _sync_fetch() -> list[str]:
         try:
-            # 优先用环境代理（http_proxy/https_proxy），无环境代理才回退本地 mihomo（10090）
+            # 优先用环境代理（http_proxy/https_proxy 由系统/env 决定），
+            # 无环境代理时直连（不硬编码本地代理，确保 GitHub 用户无代理也能用）。
             proxies = urllib.request.getproxies()
-            if not (proxies.get("http") or proxies.get("https")):
-                proxies = {"http": "http://127.0.0.1:10090", "https": "http://127.0.0.1:10090"}
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler(proxies) if proxies else urllib.request.ProxyHandler({})
+            )
             req = urllib.request.Request(
                 "https://weibo.com/ajax/side/hotSearch",
                 headers={

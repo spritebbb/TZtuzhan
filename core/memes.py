@@ -210,7 +210,7 @@ async def refresh_memes() -> list[dict]:
     bot 启动后立即刷一次，之后每 1 小时后台定时刷新。
     返回缓存后的清单。并发调用时（循环 + 对话触发）只跑一次，其余直接拿结果。
     """
-    with _refresh_lock:
+    async with _refresh_lock:
         try:
             memes = await _refine()
             if memes:

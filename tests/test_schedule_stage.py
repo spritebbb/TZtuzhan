@@ -49,9 +49,9 @@ def test_schedule_differs_by_stage():
     db.conn.commit()
     s2 = build_schedule(uid)
     assert s1 != s2
-    # 恋人晚上应包含"缠着"
+    # 恋人晚上应包含"想/你"这类在意的表达（新性格：亲昵但克制，不黏不缠）
     night_lover = [x for x in s2 if x["period"] == "晚上"][0]["todo"]
-    assert "缠" in night_lover
+    assert ("想" in night_lover or "你" in night_lover) and "自己" not in night_lover
     # 初识晚上不应主动找人
     night_new = [x for x in s1 if x["period"] == "晚上"][0]["todo"]
     assert "自己" in night_new

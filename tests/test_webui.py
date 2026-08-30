@@ -16,7 +16,8 @@ client = TestClient(webui.app)
 # 所有页面路径（含新增）
 ALL_PAGES = (
     "/", "/features", "/affection", "/mood", "/dates", "/memory",
-    "/profile", "/terms", "/style", "/stickers", "/chat", "/logs", "/system",
+    "/profile", "/terms", "/style", "/stickers", "/chat", "/logs",
+    "/config", "/system",
 )
 
 # 真实用户（测试库里有数据时）
@@ -139,3 +140,75 @@ def test_sticker_emotion_no_false_positive():
     assert "开心" not in guess_emotions("一个快乐的小狗在奔跑")
     assert "困倦" not in guess_emotions("充足的睡眠很重要")
     assert "开心" in guess_emotions("一张哈哈大笑的表情")
+
+
+# ---- 🔑 配置页 / 配置 API ----
+
+def test_config_page_renders():
+    r = client.get("/config")
+    assert r.status_code == 200
+    assert "配置" in r.text
+    assert "LLM_API_KEY" in r.text or "对话 API Key" in r.text
+    # 密钥输入框的 value 不应含明文（页面只显示掩码/占位）
+    assert 'name="LLM_API_KEY" value=""' in r.text or 'placeholder="（已配置，留空保留）"' in r.text
+
+
+def test_config_api_get():
+    r = client.get("/api/config")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert data["items"], "应返回配置项列表"
+    keys = {it["key"] for it in data["items"]}
+    assert "LLM_API_KEY" in keys and "MOOD_CITY" in keys
+
+
+def test_config_api_masks_secret():
+    from unittest import mock
+    with mock.patch.object(webui, "_read_env_map", return_value={"LLM_API_KEY": "sk-abcdefghijklmnop"}):
+        r = client.get("/api/config")
+        items = {it["key"]: it for it in r.json()["items"]}
+        llm = items["LLM_API_KEY"]
+        assert llm["type"] == "secret"
+        assert "abcdefghijklmnop" not in llm["value"]  # 不暴露完整密钥
+        assert llm["value"].startswith("sk-") or llm["value"] == ""
+
+
+def test_config_api_save_empty_body():
+    # 空 body / 无有效项 → 400
+    r = client.post("/api/config", json={})
+    assert r.status_code == 400
+
+
+def test_config_api_save_whitelist_only():
+    # 非白名单键应被丢弃，白名单键才写入（patch 掉真实 .env 写入）
+    from unittest import mock
+
+    called = {}
+
+    def fake_write(updates):
+        called["updates"] = updates
+        return len(updates), ""
+
+    with mock.patch.object(webui, "_write_env_updates", side_effect=fake_write), \
+         mock.patch.object(webui, "_read_env_map", return_value={}):
+        r = client.post("/api/config", json={"LLM_MODEL": "deepseek-chat", "EVIL_ENV": "should-drop"})
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        assert called["updates"] == {"LLM_MODEL": "deepseek-chat"}  # EVIL_ENV 被过滤
+
+
+def test_config_api_secret_mask_not_overwritten():
+    # 提交掩码串（用户没改）→ 不覆盖真实密钥
+    from unittest import mock
+
+    def fake_write(updates):
+        return len(updates), ""
+
+    with mock.patch.object(webui, "_write_env_updates", side_effect=fake_write), \
+         mock.patch.object(webui, "_read_env_map", return_value={"LLM_API_KEY": "sk-realkey-12345678"}):
+        masked = webui._mask_secret("sk-realkey-12345678")
+        r = client.post("/api/config", json={"LLM_API_KEY": masked})
+        assert r.status_code == 200
+        # 掩码与真实一致 → 判定未修改，不写入
+        assert r.json()["updated"] == 0

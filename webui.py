@@ -19,7 +19,9 @@
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -30,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import uvicorn
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from core.config import config
@@ -167,6 +169,7 @@ _NAV = [
     ("/stickers", "stick", "😂 表情"),
     ("/chat", "chat", "💬 对话"),
     ("/logs", "logs", "📋 日志"),
+    ("/config", "cfg", "🔑 配置"),
     ("/system", "sys", "⚙️ 系统"),
 ]
 
@@ -677,7 +680,7 @@ async def system_page():
             f"<tr><td>{_esc(k)}</td><td>{_esc(v) if v is not None else '—'}</td></tr>"
             for k, v in u.items() if k not in ("user_id",)
         )
-    version = "v1.1.1"
+    version = "v1.3.0"
     content = f"""
     <div class="card"><h2>⚙️ 系统 · 菟菚 {version}</h2>
         <table><tr><th>项目</th><th>状态</th><th>说明</th></tr>{cfg_rows}</table>
@@ -692,6 +695,242 @@ async def system_page():
     </div>
     """
     return _page("系统", content, "sys")
+
+
+# ---- 🔑 配置 API（查看 / 编辑 .env）----
+# 仅暴露白名单内配置项（含 API key 等），避免把全部环境变量暴露给面板。
+# key 值一律掩码显示（sk-****abcd），防止面板内容泄露密钥。
+_CONFIG_ENV_PATH = Path(__file__).resolve().parent / ".env"
+
+# (env键, 显示名, 分组, 类型: str/bool/secret, 说明)
+_CONFIG_SCHEMA = [
+    ("LLM_BASE_URL", "对话接口地址", "对话 LLM", "str", "OpenAI 兼容端点，如 https://api.deepseek.com/v1"),
+    ("LLM_API_KEY", "对话 API Key", "对话 LLM", "secret", "核心必填；sk- 开头"),
+    ("LLM_MODEL", "对话模型", "对话 LLM", "str", "如 deepseek-chat"),
+    ("LLM_TEMPERATURE", "采样温度", "对话 LLM", "str", "0~1，越大越随机；默认 0.8"),
+    ("LLM_MAX_TOKENS", "单次最大 token", "对话 LLM", "str", "默认 500"),
+    ("VISION_BASE_URL", "识图接口地址", "识图 Vision", "str", "独立视觉模型端点；留空沿用对话端点"),
+    ("VISION_API_KEY", "识图 API Key", "识图 Vision", "secret", "不配置则识图关闭"),
+    ("VISION_MODEL", "识图模型", "识图 Vision", "str", "如 qwen-vl-max；留空关闭识图"),
+    ("IMAGE_BASE_URL", "生图接口地址", "图像生成", "str", "默认 SiliconFlow"),
+    ("IMAGE_API_KEY", "生图 API Key", "图像生成", "secret", "不配置则 /画 不可用"),
+    ("IMAGE_MODEL", "生图模型", "图像生成", "str", "如 Qwen/Qwen-Image"),
+    ("SEARCH_ENABLED", "联网搜索开关", "联网搜索", "bool", "1 开 / 0 关"),
+    ("SEARCH_ENGINE", "搜索引擎", "联网搜索", "str", "bing / ddg / bocha"),
+    ("SEARCH_API_KEY", "搜索 API Key", "联网搜索", "secret", "博查 key（可选，填了优先用）"),
+    ("MOOD_CITY", "心情天气城市", "心情系统", "str", "填城市如「北京」；留空按时间段兜底"),
+    ("MEMORY_SEMANTIC", "语义记忆检索", "记忆", "bool", "1 开 / 0 关（回退关键词检索）"),
+    ("DEBOUNCE_SECONDS", "消息去抖（秒）", "回复节奏", "str", "连发合并窗口；默认 4.0"),
+    ("DELAY_JITTER", "延迟抖动", "回复节奏", "str", "真人感随机延迟比例；默认 0.4"),
+    ("THINK_DELAY", "酝酿延迟（秒）", "回复节奏", "str", "默认 2.0"),
+    ("SEND_INTERVAL", "发送间隔（秒）", "回复节奏", "str", "默认 3.0"),
+    ("PROACTIVE_USER_ID", "主动消息对象", "主动消息", "str", "逗号分隔多个 QQ；留空对最后说话的人发"),
+    ("PROACTIVE_CHECK_MINUTES", "检查间隔（分）", "主动消息", "str", "默认 15"),
+    ("PROACTIVE_IDLE_HOURS", "久别阈值（时）", "主动消息", "str", "默认 4"),
+    ("PROACTIVE_COOLDOWN_HOURS", "冷却（时）", "主动消息", "str", "默认 8"),
+]
+
+
+def _is_secret_key(key: str) -> bool:
+    """判断配置项是否为密钥（掩码显示/保存）。"""
+    for k, _, _, typ, _ in _CONFIG_SCHEMA:
+        if k == key:
+            return typ == "secret"
+    return "KEY" in key.upper() or "TOKEN" in key.upper()
+
+
+def _read_env_map() -> dict[str, str]:
+    """读取 .env 的 KEY=VALUE 映射（忽略注释与空行）。"""
+    if not _CONFIG_ENV_PATH.exists():
+        return {}
+    out: dict[str, str] = {}
+    try:
+        for line in _CONFIG_ENV_PATH.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            out[k.strip()] = v.strip()
+    except Exception:
+        pass
+    return out
+
+
+def _mask_secret(v: str) -> str:
+    """掩码密钥：sk-****abcd。空值显示为空。"""
+    if not v:
+        return ""
+    if len(v) <= 8:
+        return "****"
+    return v[:3] + "****" + v[-4:]
+
+
+def _write_env_updates(updates: dict[str, str]) -> tuple[int, str]:
+    """把 {KEY: value} 写回 .env（保留注释与顺序；缺失键追加到末尾）。
+
+    返回 (写入条数, 错误消息)。
+    """
+    try:
+        lines = _CONFIG_ENV_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception as e:
+        return 0, f"读取 .env 失败：{e}"
+    if not lines:
+        lines = []
+    written = 0
+    seen: set[str] = set()
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        k = s.partition("=")[0].strip()
+        if k in updates:
+            lines[i] = f"{k}={updates[k]}"
+            seen.add(k)
+            written += 1
+    # 文件里没有的键追加到末尾（自动补充分组）
+    missing = [k for k in updates if k not in seen]
+    for k in missing:
+        lines.append(f"{k}={updates[k]}")
+        written += 1
+    try:
+        _CONFIG_ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception as e:
+        return 0, f"写入 .env 失败：{e}"
+    return written, ""
+
+
+@app.get("/api/config")
+async def api_config():
+    """返回可配置项当前值（密钥掩码）。"""
+    env = _read_env_map()
+    items = []
+    for key, label, group, typ, desc in _CONFIG_SCHEMA:
+        val = env.get(key, "")
+        shown = _mask_secret(val) if typ == "secret" else val
+        items.append({
+            "key": key, "label": label, "group": group, "type": typ,
+            "desc": desc, "value": shown, "configured": bool(val),
+        })
+    return JSONResponse({"ok": True, "items": items, "env_path": str(_CONFIG_ENV_PATH)})
+
+
+@app.post("/api/config")
+async def api_config_save(request: Request):
+    """保存配置到 .env（密钥为空/掩码不变则保留原值）。
+
+    支持 JSON body（{key: value}）与表单（application/x-www-form-urlencoded）。
+    """
+    updates: dict[str, str] = {}
+    raw = await request.body()
+    ctype = request.headers.get("content-type", "")
+    if "application/json" in ctype:
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return JSONResponse({"ok": False, "error": "JSON 解析失败"}, status_code=400)
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(v, str):
+                    updates[k] = v.strip()
+    else:
+        # 表单：解析 urlencoded body（键=值 对）
+        from urllib.parse import parse_qs
+
+        for k, vals in parse_qs(raw.decode("utf-8", "replace")).items():
+            updates[k] = (vals[0] or "").strip()
+
+    if not updates:
+        return JSONResponse({"ok": False, "error": "没有收到配置项"}, status_code=400)
+
+    env = _read_env_map()
+    final: dict[str, str] = {}
+    schema_keys = {k for k, *_ in _CONFIG_SCHEMA}
+    for key, val in updates.items():
+        if key not in schema_keys:
+            continue  # 只允许白名单键
+        if val == "":
+            continue  # 空值 = 不修改
+        # 密钥：若提交的是掩码串（用户没改），保留原值
+        old = env.get(key, "")
+        if _is_secret_key(key) and val == _mask_secret(old) and old:
+            continue
+        final[key] = val
+    if not final:
+        return JSONResponse({"ok": True, "updated": 0, "msg": "没有需要保存的修改"})
+    n, err = _write_env_updates(final)
+    if err:
+        return JSONResponse({"ok": False, "error": err}, status_code=500)
+    return JSONResponse({"ok": True, "updated": n, "msg": f"已写入 {n} 项配置"})
+
+
+@app.get("/config", response_class=HTMLResponse)
+async def config_page():
+    """🔑 配置页：分组展示可编辑的 .env 配置（密钥掩码）。"""
+    env = _read_env_map()
+    groups: dict[str, list] = {}
+    for key, label, group, typ, desc in _CONFIG_SCHEMA:
+        val = env.get(key, "")
+        groups.setdefault(group, []).append((key, label, typ, desc, val))
+
+    blocks = []
+    for group, items in groups.items():
+        rows = []
+        for key, label, typ, desc, val in items:
+            shown = _mask_secret(val) if typ == "secret" else val
+            placeholder = ("（已配置，留空保留）" if val else "未配置")
+            if typ == "bool":
+                checked = 'checked' if val in ("1", "true", "True", "on") else ''
+                ctrl = (
+                    f'<select name="{key}" style="max-width:220px">'
+                    f'<option value="1"{" selected" if checked else ""}>开</option>'
+                    f'<option value="0"{" selected" if not checked else ""}>关</option>'
+                    f'</select>'
+                )
+            else:
+                ph = f' placeholder="{placeholder}"' if (typ == "secret" and val) else f' placeholder="{placeholder}"'
+                ctrl = (
+                    f'<input type="text" name="{key}" value="{_esc(shown) if not (typ == "secret" and val) else ""}"'
+                    f'{ph} style="max-width:340px">'
+                )
+            rows.append(
+                f'<tr><td style="white-space:nowrap">{label}<div class="hint">{_esc(desc)}</div></td>'
+                f'<td style="width:60%">{ctrl}</td>'
+                f'<td>{"✅" if val else "❌"}<div class="hint">{("已配置" if val else "未配置")}</div></td></tr>'
+            )
+        blocks.append(
+            f'<div class="card"><h2>{group}</h2>'
+            f'<table>{"" .join(rows)}</table></div>'
+        )
+
+    content = f"""
+    <div class="card">
+        <h2>🔑 配置 API · <span class="code">.env</span></h2>
+        <div class="hint">密钥只显示掩码（sk-****abcd）；留空表示不修改该项。保存后写入 <span class="code">{_esc(str(_CONFIG_ENV_PATH))}</span>，<b>重启 bot 后生效</b>。</div>
+        <form id="cfgform">
+            {'' .join(blocks)}
+            <div class="form-row">
+                <button class="btn btn-primary" type="submit">💾 保存配置</button>
+                <button class="btn" type="button" onclick="location.reload()">↻ 刷新</button>
+            </div>
+        </form>
+        <div id="result" class="hint"></div>
+    </div>
+    <script>
+    document.getElementById('cfgform').addEventListener('submit', async (e) => {{
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const data = {{}};
+        fd.forEach((v, k) => {{ if (String(v).trim() !== '') data[k] = String(v).trim(); }});
+        const res = await fetch('/api/config', {{method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify(data)}});
+        const r = await res.json();
+        const box = document.getElementById('result');
+        box.textContent = r.ok ? '✅ ' + r.msg + '（重启 bot 生效）' : '❌ ' + (r.error || '保存失败');
+        box.style.color = r.ok ? '#4ade80' : '#f87171';
+    }});
+    </script>
+    """
+    return _page("配置", content, "cfg")
+
 
 
 if __name__ == "__main__":

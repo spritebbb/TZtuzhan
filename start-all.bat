@@ -5,6 +5,9 @@ echo ==========================================
 echo   菟菚 QQ bot 一键启动
 echo ==========================================
 
+REM 项目根目录（本脚本所在目录，可随包任意放置）
+set "ROOT=%~dp0"
+
 REM === 0. 检查 bot / webui 是否已在运行（防重复启动）===
 echo.
 echo [检查] 检测已有 bot / webui 进程...
@@ -13,7 +16,7 @@ if %ERRORLEVEL% NEQ 0 (
     echo.
     echo 为避免重复启动导致消息重复，已退出。
     echo 也可直接日启动新窗口（不推荐）：
-    echo   start "TZtuzhan Bot" cmd /k "chcp 65001 ^>nul ^& cd /d D:\DSH\TZtuzhan ^& .\.venv\Scripts\python.exe bot.py"
+    echo   start "TZtuzhan Bot" cmd /k "chcp 65001 ^>nul ^& cd /d "%ROOT%" ^& .\.venv\Scripts\python.exe bot.py"
     pause
     exit /b
 )
@@ -32,23 +35,23 @@ if %ERRORLEVEL% == 0 (
 REM === 2. 启动 NapCat（官方 launcher.bat，新窗口）===
 REM     -q <BotQQ> 快速登录（从 .env 的 BOT_QQ 读取）：凭据有效则自动登录免扫码；失效才需扫码
 REM     未配置 BOT_QQ 时回退到普通登录（不传 -q）
-for /f "tokens=2 delims==" %%i in ('findstr /b "BOT_QQ" .env 2^>nul') do set "BOT_QQ=%%i"
+for /f "tokens=2 delims==" %%i in ('findstr /b "BOT_QQ" "%ROOT%.env" 2^>nul') do set "BOT_QQ=%%i"
 if not defined BOT_QQ set "BOT_QQ="
 echo.
 echo [1/3] 正在启动 NapCat（窗口：NapCat，快速登录 %BOT_QQ%）...
 if defined BOT_QQ (
-    start "NapCat" cmd /k "chcp 65001 >nul & cd /d D:\DSH\TZtuzhan\Napcat\NapCat.Shell.Windows.Node\napcat & launcher.bat -q %BOT_QQ%"
+    start "NapCat" cmd /k "chcp 65001 >nul & cd /d ""%ROOT%Napcat\NapCat.Shell.Windows.Node\napcat"" & launcher.bat -q %BOT_QQ%"
 ) else (
-    start "NapCat" cmd /k "chcp 65001 >nul & cd /d D:\DSH\TZtuzhan\Napcat\NapCat.Shell.Windows.Node\napcat & launcher.bat"
+    start "NapCat" cmd /k "chcp 65001 >nul & cd /d ""%ROOT%Napcat\NapCat.Shell.Windows.Node\napcat"" & launcher.bat"
 )
 
 REM === 3. 启动 bot（venv python，新窗口）===
 echo [2/3] 正在启动 TZtuzhan Bot（窗口：Bot）...
-start "TZtuzhan Bot" cmd /k "chcp 65001 >nul & cd /d D:\DSH\TZtuzhan & .\.venv\Scripts\python.exe bot.py"
+start "TZtuzhan Bot" cmd /k "chcp 65001 >nul & cd /d ""%ROOT%"" & .\.venv\Scripts\python.exe bot.py"
 
 REM === 4. 启动 Web 管理面板（venv python，独立进程 :8800）===
 echo [3/3] 正在启动 Web 管理面板（窗口：WebUI）...
-start "TZtuzhan WebUI" cmd /k "chcp 65001 >nul & cd /d D:\DSH\TZtuzhan & .\.venv\Scripts\python.exe webui.py"
+start "TZtuzhan WebUI" cmd /k "chcp 65001 >nul & cd /d ""%ROOT%"" & .\.venv\Scripts\python.exe webui.py"
 
 echo.
 echo ==========================================

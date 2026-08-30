@@ -6,9 +6,9 @@
 
 温柔 · 慵懒 · 病娇 · 爱晒太阳 · 爱黏人
 
-[![Version](https://img.shields.io/badge/version-v1.1.1-8a5cf6?style=flat-square)](https://github.com) [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org) [![NoneBot2](https://img.shields.io/badge/NoneBot2-2.x-4EC0D0?style=flat-square&logo=nonebot&logoColor=white)](https://nonebot.dev) [![License](https://img.shields.io/badge/license-MIT-important?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-v1.3.0-8a5cf6?style=flat-square)](https://github.com) [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org) [![NoneBot2](https://img.shields.io/badge/NoneBot2-2.x-4EC0D0?style=flat-square&logo=nonebot&logoColor=white)](https://nonebot.dev) [![License](https://img.shields.io/badge/license-MIT-important?style=flat-square)]()
 
-> 固定单人格 · QQ 私聊 · 完整记忆 · 好感度 · 心情 · 日程 · 节日 · 识图/生图 · 热梗 · 主动消息
+> 固定单人格 · QQ 私聊 · 完整记忆 · 好感度 · 心情 · 日程 · 节日 · 识图/生图 · 热梗 · 主动消息 · 意图路由 · 工具调用
 
 </div>
 
@@ -25,7 +25,9 @@
 | 🃏 | 状态卡片可视化（/好感 /心情 /日程 发图片卡片） | 🛡️ | 抗风控 · 掉线检测 |
 | 👤 | 用户画像（结构化了解你的信息/喜好/习惯） | 🗣️ | 黑话·口头禅学习（自然用你的词） |
 | 🎨 | 场景化表达风格（对应场景自然贴合） | 😂 | 表情包情绪匹配（按情绪回发收藏） |
-| 🖥️ | Web 管理面板（仪表盘/功能开关/数据管理） | ✅ | 97 项自动化测试 |
+| 🖥️ | Web 管理面板（仪表盘/功能开关/数据管理） | 🧭 | 意图路由（闲聊/回忆/情感分流，减少堆砌） |
+| 🔧 | LLM 自主工具调用（搜索/天气，两轮迭代） | 🧩 | 结构化事实记忆（五元组 + RAG 检索注入） |
+| ✅ | 189 项自动化测试 | 🔒 | 全参数化 SQL · 敏感信息不入库 |
 
 ---
 
@@ -39,7 +41,7 @@ TZtuzhan/
 ├── .env.example            # 配置模板（复制为 .env 填写）
 ├── napcat-guide.md         # Windows NapCat 部署指引
 ├── persona-菟菚.md         # 🌿 人格源文件（唯一人格来源）
-├── tests/                  # pytest 自动化测试（88 项）
+├── tests/                  # pytest 自动化测试（189 项）
 ├── core/
 │   ├── config.py           # .env 配置加载
 │   ├── persona.py          # 人格加载 + 动态注入
@@ -47,6 +49,10 @@ TZtuzhan/
 │   ├── userdb.py           # SQLite 数据层
 │   ├── memory.py           # 短期上下文 + 长期记忆检索
 │   ├── vector_store.py     # 稠密向量记忆
+│   ├── intent.py           # 🧭 意图路由（闲聊/回忆/情感/搜索分类）
+│   ├── tool_loop.py        # 🔧 LLM 自主工具调用循环
+│   ├── topic_memory.py     # 话题锚定（防跑题/串话题）
+│   ├── triple_memory.py    # 🧩 结构化事实记忆（五元组 + RAG）
 │   ├── affection.py        # 💕 好感度 v2
 │   ├── mood.py             # 🎭 心情系统
 │   ├── schedule.py         # 📅 今日日程（LLM 生成）
@@ -61,13 +67,17 @@ TZtuzhan/
 │   ├── sticker.py          # 表情包收藏（情绪标签 + 按情绪回发）
 │   ├── imagegen.py         # 二次元生图
 │   ├── draw_context.py     # 对话驱动生图
+│   ├── cards.py            # 🃏 状态卡片（好感/心情/日程图片卡片）
 │   ├── profile.py          # 👤 用户画像系统
 │   ├── terms.py            # 🗣️ 黑话/口头禅学习
 │   ├── style.py            # 🎨 场景化表达风格
 │   ├── features.py         # 功能开关（Web 面板控制）
 │   ├── memes.py            # 网络热梗
 │   ├── proactive.py        # 主动消息
+│   ├── message_build.py    # CQ 码构建/消息降级
 │   ├── tasks.py            # 后台任务调度
+│   ├── speak.py            # 语音合成
+│   ├── fun.py              # 趣味彩蛋
 │   └── log.py              # loguru 日志
 ├── webui.py                # 🖥️ Web 管理面板（独立进程，:8800）
 └── plugins/private_chat/   # QQ 私聊主插件
@@ -499,6 +509,54 @@ DRIVER=~aiohttp                           # 用 aiohttp driver 支持 WS 客户�
 | `/日子` | 查看特殊日子；`/日子 删除 1` 删除 |
 | `/画 xxx` | 生图（如 `/画 窗边的小橘猫`） |
 | 自然说"要看" | 对话驱动生图 |
+
+---
+
+## 📦 更新日志
+
+<details open>
+<summary><b>v1.3.0（2026-08-30）— 意图路由 · 工具调用 · 质量加固</b></summary>
+
+**新功能**
+- 🧭 **意图路由**：闲聊短句自动降级注入路径，减少堆砌；回忆/情感/搜索意图分类分发
+- 🔧 **LLM 自主工具调用**：```tool``` 代码块驱动 web_search / get_weather，最多 2 轮迭代，结果注入下一轮
+- 🧩 **结构化事实记忆**：五元组（主体-谓词-客体-时间-情感）提取 + SQLite 存储 + RAG 检索注入
+- 🗺️ 话题锚定：识别"当前在聊什么"，回复不被旧上下文带偏/跑题/串话题
+
+**质量加固（第二/三轮全量审计）**
+- 🔒 修复 60+ 项缺陷：跨线程 sqlite（向量库 RLock + 独立连接）、正则锚定回归、多段回复截断、
+  扣分上限缩放、天气/搜索/识图/生图/热梗同步阻塞异步化、会话锁泄漏、LLM 失败状态不一致等
+- 🧪 自动化测试 88 → **189 项**；每轮改动全量 pytest + 真实 LLM E2E 验证
+- 🌐 移除硬编码代理回退，无代理环境直连（GitHub 版开箱即用）
+
+</details>
+
+<details>
+<summary><b>v1.2.0（2026-08-28）— NapCat 快速登录</b></summary>
+
+- 扫码一次后免扫码自动登录（start-all.bat / watchdog.ps1 联动）
+</details>
+
+<details>
+<summary><b>v1.1.1（2026-08-28）— 修复</b></summary>
+
+- 修复若干对话/记忆/日程问题
+</details>
+
+<details>
+<summary><b>v1.1.0（2026-08-28）— 心情 × 日程 × 节日 深度联动</b></summary>
+
+- 🎭 心情系统联动今日日程：时段情绪偏移 + 特殊日子加成 + 时段切换即时校正
+- 🎏 中国节日系统：公历固定 + 农历（zhdate）全覆盖，节日注入对话/日程/心情加成
+- 📅 今日日程改为 LLM 随机生成（按人格+阶段+天气+心情+特殊日子每天 6 时段）
+- 🧭 上下文锚定防跑题 · 🛡️ 掉线检测 + 抗风控延迟抖动 · 🖥️ Web 管理面板
+</details>
+
+<details>
+<summary><b>v1.0.0（2026-08-27）— 首个可用版本</b></summary>
+
+- 完整人格 · 好感度 v2（四阶段+羁绊） · 短期/长期/向量记忆 · 识图/生图 · 热梗 · 主动消息
+</details>
 
 ---
 

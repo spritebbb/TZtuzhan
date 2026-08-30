@@ -8,3 +8,8 @@ __pycache__/
 # NapCat (QQ 客户端，不要进仓库)
 napcat/
 Napcat/
+
+# 鐪熷疄 LLM E2E 鑴氭湰锛堝惈娴嬭瘯鍙烽殧绂伙紝涓嶅叆搴擄級
+tools_e2e_*.py
+tools_smoke_all.py
+commit_msg.txt

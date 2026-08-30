@@ -1,24 +1,25 @@
-# 干净停止菟菚 bot（杀掉所有 bot.py 进程，保留 NapCat）
-# 用法: powershell -ExecutionPolicy Bypass -File stop-bot.ps1
+# Cleanly stop TZtuzhan bot + WebUI (kill bot.py / webui.py, keep NapCat)
+# Usage: powershell -ExecutionPolicy Bypass -File stop-bot.ps1
 $ErrorActionPreference = 'SilentlyContinue'
 
-Write-Host "=== 停止菟菚 bot ===" -ForegroundColor Cyan
-$bots = Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match 'bot\.py' }
+Write-Host "=== Stop TZtuzhan bot + WebUI ===" -ForegroundColor Cyan
+$bots = Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match 'bot\.py' -or $_.CommandLine -match 'webui\.py' }
 if ($bots) {
-    Write-Host "发现 $($bots.Count) 个 bot 进程..." -ForegroundColor Yellow
+    Write-Host "Found $($bots.Count) process(es)..." -ForegroundColor Yellow
     $bots | ForEach-Object {
-        Write-Host "  停止 PID $($_.ProcessId) (启动于 $($_.CreationDate))" -ForegroundColor Gray
+        $kind = if ($_.CommandLine -match 'bot\.py') { 'bot' } else { 'webui' }
+        Write-Host "  Stopping $kind PID $($_.ProcessId) (started $($_.CreationDate))" -ForegroundColor Gray
         Stop-Process -Id $_.ProcessId -Force
     }
     Start-Sleep -Seconds 1
-    $remaining = Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match 'bot\.py' }
+    $remaining = Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match 'bot\.py' -or $_.CommandLine -match 'webui\.py' }
     if ($remaining) {
-        Write-Host "[✗] 仍有 $($remaining.Count) 个进程残留！" -ForegroundColor Red
+        Write-Host "[X] $($remaining.Count) process(es) still alive!" -ForegroundColor Red
         exit 1
     } else {
-        Write-Host "[✓] 已全部停止" -ForegroundColor Green
+        Write-Host "[OK] All stopped" -ForegroundColor Green
     }
 } else {
-    Write-Host "没有 bot 在运行" -ForegroundColor Green
+    Write-Host "No bot/webui running" -ForegroundColor Green
 }
 exit 0

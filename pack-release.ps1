@@ -1,8 +1,8 @@
-# Package TZtuzhan v1.3.0 Release zip
+# Package TZtuzhan v1.3.1 Release zip
 # Exclude: .venv / data / Napcat / __pycache__ / old zips / .env(secret) / .git
 $ErrorActionPreference = 'Stop'
 $Root = 'D:\DSH\TZtuzhan'
-$Version = 'v1.3.0'
+$Version = 'v1.3.1'
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmm'
 $OutZip = Join-Path $Root ('TZtuzhan-' + $Version + '-' + $Stamp + '.zip')
 

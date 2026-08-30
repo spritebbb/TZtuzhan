@@ -190,43 +190,62 @@ def backfill(user_id: str = "", limit: int = 1000) -> int:
     返回本次新建的条数。失败静默（下次启动再补）。
 
     注意：按表分 kind 命名空间，避免两表 id 冲突覆盖索引。
+
+    锁策略（修 database is locked）：
+    - 读连接用独立连接 + busy_timeout（不占主线程 db.conn 写锁）
+    - embedding 网络调用在写事务外进行（避免 long-run 写锁阻塞主线程写）
+    - 索引插入分批提交（每批几十条），及时释放写锁，主线程写不受长时间阻塞
     """
     # 在 to_thread 工作线程里执行，需独立读连接（不能碰主线程建的 db.conn）
-    read_conn = sqlite3.connect(config.data_dir / "bot.db")
+    read_conn = sqlite3.connect(config.data_dir / "bot.db", timeout=10)
     read_conn.row_factory = sqlite3.Row
     built = 0
+    pending: list[tuple[str, str]] = []  # 待处理的 (key, content)
     try:
+        # 阶段 0：锁外收集所有候选（读扫描 + exists 判断交给阶段 2，这里只读数据表）
+        for table, kind in (("long_memory", "lm"), ("facts", "facts")):
+            last_id = 0
+            while True:
+                rows = read_conn.execute(
+                    "SELECT id, user_id, content FROM {} WHERE id > ? ORDER BY id LIMIT ?".format(table),
+                    (last_id, limit),
+                ).fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    rid, uid, content = row["id"], row["user_id"], row["content"]
+                    last_id = rid
+                    if user_id and uid != user_id:
+                        continue
+                    pending.append((f"{uid}:{kind}:{rid}", content))
+        # 阶段 1：锁外全部 embedding（无锁、无写事务，主线程读写完全不受影响）
+        embedded: list[tuple[str, list[float]]] = []
+        for key, content in pending:
+            vec = embed(content)
+            if not vec:
+                continue
+            embedded.append((key, vec))
+        if not embedded:
+            if built:
+                logger.info("[向量] 存量回填完成，新增 {} 条索引", built)
+            return 0
+        # 阶段 2：锁内 exists 过滤 + 快速插入 + 分批提交（锁只持有本地毫秒级操作）
         with _vec_lock:
             conn = _vconn()
-            for table, kind in (("long_memory", "lm"), ("facts", "facts")):
-                # 全表扫描 + 逐条 exists 判断；分批取避免一次加载过多
-                last_id = 0
-                while True:
-                    rows = read_conn.execute(
-                        "SELECT id, user_id, content FROM {} WHERE id > ? ORDER BY id LIMIT ?".format(table),
-                        (last_id, limit),
-                    ).fetchall()
-                    if not rows:
-                        break
-                    for row in rows:
-                        rid, uid, content = row["id"], row["user_id"], row["content"]
-                        last_id = rid
-                        if user_id and uid != user_id:
-                            continue
-                        key = f"{uid}:{kind}:{rid}"
-                        exists = conn.execute(
-                            "SELECT 1 FROM vec_memory WHERE id=?", (key,)
-                        ).fetchone()
-                        if exists:
-                            continue
-                        vec = embed(content)
-                        if not vec:
-                            continue
-                        conn.execute(
-                            "INSERT INTO vec_memory (id, text_embedding) VALUES (?, ?)",
-                            (key, _vec_str(vec)),
-                        )
-                        built += 1
+            for key, vec in embedded:
+                exists = conn.execute(
+                    "SELECT 1 FROM vec_memory WHERE id=?", (key,)
+                ).fetchone()
+                if exists:
+                    continue
+                conn.execute(
+                    "INSERT INTO vec_memory (id, text_embedding) VALUES (?, ?)",
+                    (key, _vec_str(vec)),
+                )
+                built += 1
+                # 分批提交：每 50 条释放一次写锁，避免长事务阻塞主线程写
+                if built % 50 == 0:
+                    conn.commit()
             conn.commit()
         if built:
             logger.info("[向量] 存量回填完成，新增 {} 条索引", built)

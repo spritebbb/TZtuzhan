@@ -34,13 +34,15 @@ async def _start_background_tasks():
     # ② 存量记忆向量索引回填（后台，不阻塞启动；失败下次启动重试）
     async def _backfill_vectors():
         try:
+            import asyncio
+
             from core.vector_store import backfill, enabled, indexed_count
 
             if not enabled():
                 return
             total = indexed_count()
             logger.info("[向量] 启动回填：已有 {} 条索引", total)
-            backfill()
+            await asyncio.to_thread(backfill)  # embedding 走网络 → 放线程池
         except Exception:
             logger.exception("[向量] 启动回填失败")
 

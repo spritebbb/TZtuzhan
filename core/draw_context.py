@@ -12,8 +12,8 @@ from .llm import chat
 from .log import logger
 from .userdb import db
 
-# 用户表达"想看"的意图词（只匹配真正要看图的强烈意图，避免"让我看看景色"这类误触发）
-_WANT_RE = re.compile(r"(想看|我要看|给我看|给我看看|发我|发给我|发来看|看看呗|好呀|好哇|好啊)")
+# 用户表达"想看"的意图词（只匹配真正要看图的强烈意图，避免"好呀"等通用附和误触发）
+_WANT_RE = re.compile(r"(想看|我要看|给我看|给我看看|发我|发给我|发来看|看看呗)")
 # 排除"不想看/别看"的否定
 _NOT_WANT_RE = re.compile(r"(不|别|不用|算了|才不|没兴趣)")
 

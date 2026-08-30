@@ -35,17 +35,28 @@ FACT_PROMPT = """你是记忆提取员。根据下面的对话，提取两样东
 """
 
 
-def _parse_json(resp: str):
+def _parse_json(resp: str) -> dict:
     text = resp.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-    return json.loads(text)
+    if text.startswith("json"):
+        text = text[4:].strip()
+    data = json.loads(text)
+    return data if isinstance(data, dict) else {}
 
 
 async def run_daily_batch(user_id: str, day: date) -> None:
-    """昨日好感度判定 + 事实提炼。"""
+    """昨日好感度判定 + 事实提炼。执行完成才推进 last_batch_date（失败可重试）。"""
+    from .userdb import kv_get as _kv_get, kv_set as _kv_set
+
+    # 幂等防重跑：同一天只执行一次（schedule 按 key 去重，这里再兜一道）
+    done_key = f"daily_batch:{day.isoformat()}"
+    if _kv_get(user_id, done_key):
+        db.set_batch_date(user_id, day.isoformat())
+        return
     rows = db.messages_between(user_id, day, day)
     if not rows:
+        db.set_batch_date(user_id, day.isoformat())
         return
     transcript = "\n".join(f"{r['role']}: {r['content']}" for r in rows[-60:])
     data = {}
@@ -76,6 +87,9 @@ async def run_daily_batch(user_id: str, day: date) -> None:
         db.set_nickname(user_id, clean_address(addr)[:12])
 
     await extract_facts(user_id, day)
+    # 全部完成 → 标记当日已处理，并推进 last_batch_date
+    _kv_set(user_id, done_key, "1")
+    db.set_batch_date(user_id, day.isoformat())
 
 
 async def extract_facts(user_id: str, day: date | None = None) -> None:
@@ -91,8 +105,9 @@ async def extract_facts(user_id: str, day: date | None = None) -> None:
         if not rows:
             return
         transcript = "\n".join(f"{r['role']}: {r['content']}" for r in rows[-60:])
-        # 用该日最后一条消息的 id 推进游标，避免吞掉今天的新消息
-        done = rows[-1]["id"] if rows else 0
+        # 用该日最后一条消息的 id 推进游标，避免吞掉今天的新消息。
+        # 注意：不能回退游标——若上次惰性提炼已推进到更大 id，本次取 max。
+        done = max(rows[-1]["id"], last_id) if rows else last_id
     else:
         rows = db.messages_after(user_id, last_id, 60)
         if len(rows) < 8:  # 太少不值得提炼，省一次调用
@@ -127,9 +142,10 @@ async def extract_facts(user_id: str, day: date | None = None) -> None:
             # 给新事实建稠密向量索引（失败静默）
             if fid is not None:
                 try:
+                    import asyncio as _asyncio
                     from .vector_store import index as vec_index
 
-                    vec_index(user_id, fid, str(f).strip()[:100])
+                    await _asyncio.to_thread(vec_index, user_id, fid, str(f).strip()[:100], "facts")
                 except Exception:
                     pass
     if style:

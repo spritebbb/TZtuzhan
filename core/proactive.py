@@ -213,23 +213,39 @@ async def _send_with_retry(bot, user_id: str, message) -> None:
     raise last_exc
 
 
-async def _send_burst(bot, user_id: str, text: str) -> None:
-    """像网友一样把主动消息拆成几条短消息发送（也不带句号）。"""
+async def _send_burst(bot, user_id: str, text: str) -> int:
+    """像网友一样把主动消息拆成几条短消息发送（也不带句号）。
+
+    返回成功发出的条数（>=1 表示已部分发出；0 表示一条都没发出去）。
+    中途失败即停止剩余部分：避免"前几条已发出、整批却未标记，
+    下轮调度整批重发"造成用户收到重复消息。
+    """
     parts = [p.strip().rstrip("。").strip() or p.strip() for p in text.split("\n") if p.strip()]
     if not parts:
         parts = [text.rstrip("。")]
+    sent = 0
     for i, p in enumerate(parts[:5]):
         if i > 0:
             await asyncio.sleep(_jitter(config.send_interval))
-        await _send_with_retry(bot, user_id, p)
+        try:
+            await _send_with_retry(bot, user_id, p)
+            sent += 1
+        except Exception:
+            logger.warning("[主动] 发送中途失败（已发出 {} 条，剩余放弃，避免整批重发重复）", sent)
+            break
+    return sent
 
 
 async def send_proactive_now(bot, user_id: str) -> bool:
     """立即给 user_id 主动发一条（用于 /主动 测试或定时触发）。"""
     try:
         msg_text = await proactive_message(user_id)
-        await _send_burst(bot, user_id, msg_text)
-        # 主动消息也存档：用户回复时上下文能接上（修复此前不写 messages 的断档）
+        sent = await _send_burst(bot, user_id, msg_text)
+        # 一条都没发出去 → 返回 False，不标记，下轮可重试整批
+        if sent < 1:
+            return False
+        # 至少发出 1 条即视为"已主动"：标记 last_proactive（同日去重），
+        # 避免发送中途失败后下轮整批重发、用户重复收到已发部分。
         db.add_message(user_id, "assistant", msg_text)
         db.set_last_proactive(user_id)
         # 记录本次主动消息时间戳（供「回应主动消息」好感度奖励检测）
@@ -292,34 +308,40 @@ async def run_scheduler() -> None:
     - ④ 同日去重：一天内对同一用户只主动一次（避免多次打扰）
     """
     while True:
-        # ④ 随机抖动：在基准间隔上 ±30%，避免"每 15 分钟整点"的机械感
-        base = config.proactive_check_minutes * 60
-        await asyncio.sleep(base * random.uniform(0.7, 1.3))
+        try:
+            # ④ 随机抖动：在基准间隔上 ±30%，避免"每 15 分钟整点"的机械感
+            base = config.proactive_check_minutes * 60
+            await asyncio.sleep(base * random.uniform(0.7, 1.3))
 
-        today = datetime.now().date().isoformat()
-        for user_id in _target_user_ids():
-            age = _age_hours(db.last_message_ts(user_id))
-            # 特殊日子（节日/用户的生日/纪念日）：当天即使刚聊过也要主动一次，
-            # 不因"离上次说话太近"而错过该说的祝福。其余日子仍按久别阈值。
-            is_special_day = bool(_festival_hint() or _special_date_hint(user_id))
-            if not is_special_day and (age is None or age < config.proactive_idle_hours):
-                continue
-
-            last_pro = db.get_last_proactive(user_id)
-            if last_pro:
-                # 同日去重：今天已主动过 → 跳过
+            today = datetime.now().date().isoformat()
+            for user_id in _target_user_ids():
                 try:
-                    if last_pro[:10] == today:
+                    age = _age_hours(db.last_message_ts(user_id))
+                    # 特殊日子（节日/用户的生日/纪念日）：当天即使刚聊过也要主动一次，
+                    # 不因"离上次说话太近"而错过该说的祝福。其余日子仍按久别阈值。
+                    is_special_day = bool(_festival_hint() or _special_date_hint(user_id))
+                    if not is_special_day and (age is None or age < config.proactive_idle_hours):
                         continue
+
+                    last_pro = db.get_last_proactive(user_id)
+                    if last_pro:
+                        # 同日去重：今天已主动过 → 跳过
+                        try:
+                            if last_pro[:10] == today:
+                                continue
+                        except Exception:
+                            pass
+                        hours_since = _age_hours(last_pro)
+                        if hours_since is not None and hours_since < _stage_cooldown_hours(user_id):
+                            continue
+
+                    try:
+                        from nonebot import get_bot
+
+                        await send_proactive_now(get_bot(), user_id)
+                    except Exception:
+                        logger.exception("[主动] 定时主动发消息失败：{}", user_id)
                 except Exception:
-                    pass
-                hours_since = _age_hours(last_pro)
-                if hours_since is not None and hours_since < _stage_cooldown_hours(user_id):
-                    continue
-
-            try:
-                from nonebot import get_bot
-
-                await send_proactive_now(get_bot(), user_id)
-            except Exception:
-                logger.exception("[主动] 定时主动发消息失败：{}", user_id)
+                    logger.exception("[主动] 检查用户 {} 时异常（跳过，不影响其他用户）", user_id)
+        except Exception:
+            logger.exception("[主动] 调度器循环异常（已恢复，继续运行）")

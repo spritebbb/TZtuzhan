@@ -159,10 +159,13 @@ def render_affection_card(
         _draw_progress(d, 56, bar_y - 2, W - 120, 18, affection / 100, (255, 255, 255))
         d.text((W - 64, bar_y - 2), "100", font=_font(False, 14), fill=(255, 255, 255, 180))
 
-        # 下一阶段提示
+        # 下一阶段提示（阶段名取自 STAGE_THRESHOLDS，避免硬编码「恋人」）
+        from . import affection as _aff
+
+        max_stage = _aff.STAGE_THRESHOLDS[-1][1]
         tip = ""
         if next_threshold:
-            tip = f"距「恋人」还需 {next_threshold - affection} 点"
+            tip = f"距「{max_stage}」还需 {next_threshold - affection} 点"
         else:
             tip = "已是最高阶段，感情圆满 💞"
         d.text((36, H - 42), tip, font=_font(False, 20), fill=(255, 235, 240))
@@ -199,9 +202,12 @@ def render_mood_card(
         _draw_progress(d, 36, bar_y, W - 72, 18, mood / 100, (255, 255, 255))
 
         # 描述（自动换行）
-        d.text((36, 214), desc, font=_font(False, 20), fill=(255, 245, 248))
+        y = 214
+        for line in _wrap_text(d, desc, _font(False, 20), W - 72)[:2]:
+            d.text((36, y), line, font=_font(False, 20), fill=(255, 245, 248))
+            y += 28
         if weather:
-            d.text((36, 248), weather, font=_font(False, 18), fill=(255, 235, 240))
+            d.text((36, y), weather, font=_font(False, 18), fill=(255, 235, 240))
 
         return _finalize(img)
     except Exception:

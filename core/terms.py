@@ -112,23 +112,30 @@ async def extract_terms(user_id: str, day=None, *, rows=None, done=0) -> bool:
             text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         data = json.loads(text)
     except Exception:
-        logger.exception("[口头禅] {} 提炼失败", user_id)
-        db.set_last_profile_msg_id(user_id, done)
+        # 失败不推进游标：保留这批消息，下次提炼仍能重试（避免永久丢数据）
+        logger.exception("[口头禅] {} 提炼失败（不推进游标，稍后重试）", user_id)
         return False
 
     if not isinstance(data, dict):
-        db.set_last_profile_msg_id(user_id, done)
+        logger.warning("[口头禅] {} 提炼返回格式异常（不推进游标）", user_id)
         return False
 
     for term in data.get("catchphrases") or []:
-        s = str(term).strip()[:20]
+        if not isinstance(term, str):
+            continue
+        s = term.strip()[:20]
         if s:
             db.add_term(user_id, s, "catchphrase")
     for item in data.get("slangs") or []:
         if not isinstance(item, dict):
             continue
-        s = str(item.get("term", "")).strip()[:20]
+        t = item.get("term")
+        m = item.get("meaning")
+        if not isinstance(t, str) or not t.strip():
+            continue
+        s = t.strip()[:20]
+        meaning = m.strip()[:30] if isinstance(m, str) else ""
         if s:
-            db.add_term(user_id, s, "slang", str(item.get("meaning", "")).strip()[:30])
+            db.add_term(user_id, s, "slang", meaning)
     db.set_last_profile_msg_id(user_id, done)
     return True

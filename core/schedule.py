@@ -115,8 +115,8 @@ def _parse_llm_schedule(resp: str) -> list[dict] | None:
         todo = str(it.get("todo", "")).strip()
         if period in allowed and todo:
             out.append({"period": period, "todo": todo})
-    # 要求覆盖全部 6 个时段
-    if len(out) < 6:
+    # 要求覆盖全部 6 个时段（去重后仍需完整，避免 LLM 重复输同一时段缺另一段）
+    if len(set(it["period"] for it in out)) < 6:
         return None
     return out[:6]
 
@@ -443,7 +443,7 @@ async def ensure_schedule(user_id: str, *, city: str = "") -> list[dict]:
     """确保当日日程已生成（LLM 优先，规则兜底），返回日程。
 
     当天首次调用时用 LLM 随机生成并写缓存；同一天后续直接读缓存。
-    在 pipeline 构造 prompt 前调用，让 schedule_prompt 能拿到 LLM 版日程。
+    LLM 失败时退回规则版但不写缓存，稍后重试仍有机会用 LLM 生成。
     """
     cache_key = _cache_key()
     cached = kv_get(user_id, cache_key)
@@ -452,15 +452,16 @@ async def ensure_schedule(user_id: str, *, city: str = "") -> list[dict]:
             return json.loads(cached)
         except Exception:
             pass
-    # 用 LLM 生成（失败则规则兜底）
-    sched = await _generate_via_llm(user_id, city=city) or _rule_schedule(
-        user_id, city=city
-    )
-    try:
-        kv_set(user_id, cache_key, json.dumps(sched, ensure_ascii=False))
-    except Exception:
-        pass
-    return sched
+    # 用 LLM 生成，成功则写缓存
+    sched = await _generate_via_llm(user_id, city=city)
+    if sched:
+        try:
+            kv_set(user_id, cache_key, json.dumps(sched, ensure_ascii=False))
+        except Exception:
+            pass
+        return sched
+    # LLM 失败 → 规则兜底（不写缓存，当天稍后仍有机会用 LLM 生成）
+    return _rule_schedule(user_id, city=city)
 
 
 def describe(user_id: str, *, city: str = "") -> str:

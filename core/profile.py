@@ -135,12 +135,12 @@ async def extract_profile(user_id: str, day=None, *, rows=None, done=0) -> bool:
         )
         data = _parse_json(resp)
     except Exception:
-        logger.exception("[画像] {} 提炼失败", user_id)
-        db.set_last_profile_msg_id(user_id, done)
+        # 失败不推进游标：保留这批消息，下次提炼仍能重试（避免永久丢数据）
+        logger.exception("[画像] {} 提炼失败（不推进游标，稍后重试）", user_id)
         return False
 
     if not isinstance(data, dict):
-        db.set_last_profile_msg_id(user_id, done)
+        logger.warning("[画像] {} 提炼返回格式异常（不推进游标）", user_id)
         return False
 
     added = 0
@@ -149,7 +149,10 @@ async def extract_profile(user_id: str, day=None, *, rows=None, done=0) -> bool:
         if not isinstance(items, list):
             continue
         for item in items:
-            text = str(item).strip()[:80]
+            # LLM 偶发输出 dict/list 而非字符串：直接跳过，避免 str() 存入垃圾文本
+            if not isinstance(item, str):
+                continue
+            text = item.strip()[:80]
             if not text:
                 continue
             if db.add_profile(user_id, cat, text, "llm") is not None:

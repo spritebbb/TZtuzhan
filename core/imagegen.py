@@ -97,13 +97,23 @@ def _imgs_dir() -> Path:
     return d
 
 
+_GEN_MAX_BYTES = 20 * 1024 * 1024  # 生图结果下载上限 20MB（防异常大图撑爆内存）
+
+
 def _download(url: str, timeout: int = 60) -> bytes:
     if url.startswith("data:"):
         import base64
-        return base64.b64decode(url.split(",", 1)[1])
+
+        data = base64.b64decode(url.split(",", 1)[1])
+        if len(data) > _GEN_MAX_BYTES:
+            raise ValueError(f"图片超过 {_GEN_MAX_BYTES // 1024 // 1024}MB，拒绝")
+        return data
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+        data = r.read(_GEN_MAX_BYTES + 1)
+    if len(data) > _GEN_MAX_BYTES:
+        raise ValueError(f"图片超过 {_GEN_MAX_BYTES // 1024 // 1024}MB，拒绝")
+    return data
 
 
 def _guess_ext(data: bytes) -> str:

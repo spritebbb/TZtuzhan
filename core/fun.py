@@ -156,12 +156,25 @@ def _clear_game(user_id: str) -> None:
     kv_set(user_id, _GAME_KEY, "")
 
 
-def start_guess_game(user_id: str) -> str:
-    """开始一轮猜数字，菟菚心里想一个 1-100 的数。"""
+def start_guess_game(user_id: str, force: bool = False) -> str:
+    """开始一轮猜数字，菟菚心里想一个 1-100 的数。
+
+    force=False 且已有进行中的游戏时，不静默覆盖，提示继续（避免误触丢进度）。
+    """
+    state = _game_state(user_id)
+    if state and state.get("game") == "guess" and not force:
+        return "上一轮还没猜完呢（已猜 {} 次），继续猜吧；想重开就说「重新猜数字」～".format(
+            state.get("attempts", 0)
+        )
     answer = random.randint(1, 100)
     state = {"game": "guess", "answer": answer, "attempts": 0, "hints": []}
     _save_game(user_id, state)
     return "我想了一个 1 到 100 之间的数，你猜是多少？"
+
+
+def restart_guess_game(user_id: str) -> str:
+    """强制重开一轮猜数字（丢弃旧进度）。"""
+    return start_guess_game(user_id, force=True)
 
 
 def guess_number(user_id: str, guess: int) -> str:

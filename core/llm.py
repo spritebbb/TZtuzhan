@@ -19,7 +19,7 @@ _MAX_RETRIES = 2                 # 最多重试 2 次（共 3 次尝试）
 _RETRY_BASE_SEC = 1.5            # 首次退避 1.5s
 _TIMEOUT_SEC = 90                # 单次请求超时
 
-# 可安全重试的异常类型（网络/超时/5xx）
+# 可安全重试的异常类型（网络/超时/连接类/5xx/限流）
 _RETRYABLE = (TimeoutError,)
 
 
@@ -27,6 +27,14 @@ def _is_retryable(exc: Exception) -> bool:
     """判断异常是否值得重试。"""
     if isinstance(exc, _RETRYABLE):
         return True
+    # openai.APIConnectionError：连接层失败（DNS/握手/连接被重置等），值得重试
+    try:
+        from openai import APIConnectionError
+
+        if isinstance(exc, APIConnectionError):
+            return True
+    except Exception:
+        pass
     # openai.APIStatusError：429 / 5xx 可重试
     try:
         status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
@@ -65,7 +73,8 @@ async def chat(
     失败自动重试（指数退避），全部失败抛异常（调用方兜底）。
     """
     if mock:
-        last = messages[-1]["content"]
+        # mock 回显最后一条**用户**消息（若末尾是 system 指令，别把 system 内容当回复）
+        last = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
         return f"[模拟回复] 收到啦：{last[:30]}……(￣▽￣)"
     client = get_client()
     last_exc: Exception | None = None

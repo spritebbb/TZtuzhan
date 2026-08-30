@@ -64,7 +64,7 @@ async def _extract_triples_lazy(user_id: str) -> None:
         pass
 
 
-_ADDRESS_ASK_WORDS = ("称呼你", "怎么称", "怎么叫", "叫你什么", "想让你怎么称呼", "叫你", "叫法")
+_ADDRESS_ASK_WORDS = ("称呼你", "怎么称", "怎么叫", "叫你什么", "想让你怎么称呼", "叫法")
 
 
 def _asked_address(last_assistant: str | None) -> bool:
@@ -79,11 +79,14 @@ def _needs_search(text: str) -> bool:
     """是否命中需要联网搜索的内容。"""
     return any(k in text for k in _SEARCH_KEYS)
 
-# 称呼意图检测：判断「这句是否在设置称呼」（正则无法精确取名，只做判断 + mock 兜底）
+# 称呼意图检测：判断「这句是否在设置称呼」（正则精确匹配，避免无关句误触）
+# 注意：只用完整意图短语，不用裸「叫我」「你叫我」「喊我」——它们会误配「叫我去吃饭」等无关句。
 ADDRESS_RE = re.compile(
-    r"(?:你可以叫我|可以叫我|以后叫我|以后就叫我|以后都叫我|叫我一声|叫我|喊我|称呼我|你叫我)[:：]?\s*"
+    r"(?:你可以叫我|可以叫我|以后叫我|以后就叫我|以后都叫我|叫我一声|称呼我)[:：]?\s*"
     r"[「『\"'“”《〈]*([^吧呀嘛啊呢哦啦呗哈咯～~。，,、!！?？…\s]{1,8})"
 )
+# 称呼候选词黑名单：含这些词的不是真正要设置的称呼
+_ADDRESS_BLACKLIST = ("帮", "给", "去", "来", "拿", "做", "让", "是", "有", "要", "走", "放", "买", "吃", "喝")
 _TRAIL_CHARS = "吧呀嘛啊呢哦啦呗哈咯～~。，,、!！?？…"
 
 
@@ -112,17 +115,19 @@ def _extract_reply(text: str) -> str:
         if m and m.group(1).strip():
             return m.group(1).strip()
     # 没有「回复」标注：如果有「思考」段且其与被标注的正文之间有清晰分隔，
-    # 直接用思考标记后面的内容；但若思考段吞噬了整段（无后续正文），保留全文。
+    # 取思考段之后的内容；思考段往往是一整行，正文从下一行开始——
+    # 只保留思考段第一行之后的部分，避免把内心思考发给对方（思考泄漏）。
     thought_pat = re.compile(
-        r"(?:【思考】|〔思考〕|思考[：:])"
-        r"\s*(?P<body>[\s\S]*)",
+        r"(?:【思考】|〔思考〕|思考[：:])\s*[^\n]*(?:\n(?P<body>[\s\S]*))?",
     )
     m = thought_pat.search(text)
     if m:
-        body = m.group("body").strip()
-        # 思考段后还有内容才算有正文；否则把整句当回复
+        body = (m.group("body") or "").strip()
         if body:
             return body
+        # 思考段后无正文（整句都是思考）→ 保守返回空，由调用方兜底
+        return ""
+    # 无思考标注 → 整段当回复
     return text.strip()
 
 
@@ -151,7 +156,8 @@ def strip_actions(text: str) -> str:
 
 
 # 告别场景：用户说了这些，菟菚只需一句简短道别，不复读、不刷屏
-_FAREWELL_RE = re.compile(r"(晚安|再见|拜拜|明天见|睡啦|睡了|先睡了|我睡了|告辞|886|睡了睡了)")
+# 注意：不用裸「睡了」（会误伤「睡不着/睡了吗/还没睡」），只用明确的道别短语
+_FAREWELL_RE = re.compile(r"(晚安|再见|拜拜|明天见|睡啦|先睡了|我睡了|我去睡了|睡了睡了|睡觉了|该睡了|告辞|886)")
 _FAREWELL_REPLY = {
     "晚安": "晚安🌙",
     "再见": "再见呀",
@@ -210,12 +216,32 @@ async def _extract_profile_and_terms(user_id: str) -> None:
     await asyncio.gather(*[fn(user_id, rows=rows, done=done) for fn in tasks])
 
 
+# 同用户串行锁：pipeline 会写好感度/记忆/消息表，若两条消息并发处理会竞态
+# （好感度计数错乱、消息顺序颠倒）。按 user_id 加锁，天然串行。
+_user_locks: dict[str, "asyncio.Lock"] = {}
+
+
+def _user_lock(user_id: str) -> "asyncio.Lock":
+    import asyncio
+
+    lock = _user_locks.get(user_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _user_locks[user_id] = lock
+    return lock
+
+
 async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bool = False) -> str:
     """处理一条用户消息，返回菟菚的回复。
 
     merged_msg=True 表示 text 是用户连续发送的多条消息合并成的一段话，
     提示模型把这段当成对方一次性的完整表达，用一句精简的话回应整体，不逐条复读。
     """
+    async with _user_lock(user_id):
+        return await _process_locked(user_id, text, mock=mock, merged_msg=merged_msg)
+
+
+async def _process_locked(user_id: str, text: str, *, mock: bool = False, merged_msg: bool = False) -> str:
     user = db.ensure_user(user_id)
     first_chat = not user["first_chat_done"]
 
@@ -229,6 +255,8 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
 
     # 1) 好感度即时规则（含跨天回滚）
     await affection.on_message(user_id, text)
+    # 好感度可能已变：刷新快照，后续 system prompt / 阶段判定用最新值
+    user = db.get_user(user_id)
 
     # 1.1) v2 正向互动即时奖励（每日各上限 1 次；不阻塞、失败静默）
     try:
@@ -325,14 +353,26 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
             m = ADDRESS_RE.search(text)
             candidate = clean_address(m.group(1)) if m else None
         elif address_intent or _asked_address(db.last_assistant_message(user_id)):
-            candidate = await extract_address(text)
+            try:
+                candidate = await extract_address(text)
+            except Exception:
+                logger.exception("[pipeline] 称呼提取失败")
+                candidate = None
     elif address_intent:
         # 已设称呼：仅在用户主动设置/更改称呼时检测（过分称呼同样扣分）
         if mock:
             m = ADDRESS_RE.search(text)
             candidate = clean_address(m.group(1)) if m else None
         else:
-            candidate = await extract_address(text)
+            try:
+                candidate = await extract_address(text)
+            except Exception:
+                logger.exception("[pipeline] 称呼提取失败")
+                candidate = None
+    if candidate:
+        # 黑名单过滤：含动词/功能词的候选不是真正要设置的称呼
+        if any(b in candidate for b in _ADDRESS_BLACKLIST):
+            candidate = None
     if candidate:
         if affection.check_bad_address(candidate):
             db.update_affection(user_id, affection.BAD_ADDRESS_PENALTY, "要求不合适的称呼")
@@ -364,7 +404,10 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
     # 3.5) 联网搜索（命中需要搜索的关键词时）
     search_hits = []
     if not mock and _needs_search(text):
-        search_hits = web_search(text)
+        import asyncio as _asyncio
+
+        # web_search 是同步 urllib 阻塞 → 放线程池，避免卡事件循环
+        search_hits = await _asyncio.to_thread(web_search, text)
 
     # 4) 组装 prompt
     # 4.0) 意图路由：判断这条消息是闲聊还是需要工具/回忆/情感注入。
@@ -751,6 +794,9 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
         raw = await chat(messages, mock=mock)
     reply = strip_actions(_extract_reply(raw))
     reply = trim_farewell(text, reply)
+    # 兜底：回复为空/只剩思考（LLM 输出异常）时，给一句不冷场的默认回复
+    if not reply.strip():
+        reply = "嗯……我想想怎么回你。"
 
     # 6) 存档
     db.add_message(user_id, "user", text)
@@ -761,10 +807,12 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
 
     # 6.1) 给新长期记忆建稠密向量索引（失败静默，不影响回复）
     try:
+        import asyncio as _asyncio
         from .vector_store import index as vec_index
 
-        vec_index(user_id, lm1_id, f"用户说：{text}")
-        vec_index(user_id, lm2_id, f"菟菚说：{reply}")
+        # embedding 走网络（同步 urllib）→ 放线程池避免阻塞事件循环
+        await _asyncio.to_thread(vec_index, user_id, lm1_id, f"用户说：{text}", "lm")
+        await _asyncio.to_thread(vec_index, user_id, lm2_id, f"菟菚说：{reply}", "lm")
     except Exception:
         pass
     return reply

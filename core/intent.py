@@ -31,10 +31,10 @@ _SEARCH_WORDS = {
     "天气", "温度", "新闻", "热搜", "发生了什么",
 }
 
-# 需生图/画画的触发词
+# 需生图/画画的触发词（不用裸「画」——会误配「画面/漫画/油画」等普通词）
 _DRAW_WORDS = {
-    "画", "画画", "画一个", "画一张", "生成图片", "生图", "画个", "画幅",
-    "给我画", "帮我画", "想要看", "想看", "看看你", "让我看看",
+    "画一个", "画一张", "画个", "画幅", "生成图片", "生图",
+    "给我画", "帮我画", "想要看", "想看", "让我看看",
 }
 
 # 回忆/翻旧账
@@ -64,8 +64,6 @@ def classify(text: str) -> dict:
             "need_draw": bool,    # 需要生图
             "need_recall": bool,  # 需要长期记忆检索
             "need_emotional": bool, # 需要情感相关注入（画像/风格/偏好）
-            "need_topic": bool,   # 需要话题延续
-            "need_story": bool,   # 需要故事/游戏注入
         }
     """
     lowered = text.lower().strip()
@@ -75,8 +73,6 @@ def classify(text: str) -> dict:
         "need_draw": False,
         "need_recall": False,
         "need_emotional": False,
-        "need_topic": False,
-        "need_story": False,
     }
 
     # 纯闲聊短句 → 整句匹配

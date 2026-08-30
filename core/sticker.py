@@ -46,13 +46,24 @@ def guess_emotions(desc: str) -> str:
 
 def _download(url: str, timeout: int = 20) -> bytes:
     if url.startswith("data:"):
-        return base64.b64decode(url.split(",", 1)[1])
+        data = base64.b64decode(url.split(",", 1)[1])
+        if len(data) > _STICKER_MAX_BYTES:
+            raise ValueError("表情包过大，跳过收藏")
+        return data
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         data = r.read(_STICKER_MAX_BYTES + 1)
     if len(data) > _STICKER_MAX_BYTES:
         raise ValueError("表情包过大，跳过收藏")
     return data
+
+
+def _is_image_bytes(data: bytes) -> bool:
+    """校验二进制确实是常见图片格式（PNG/JPEG/GIF/WEBP），防止下载到 HTML 错误页。"""
+    if not data:
+        return False
+    return data[:8] == b"\x89PNG\r\n\x1a\n" or data[:3] == b"\xff\xd8\xff" or \
+        data[:6] in (b"GIF87a", b"GIF89a") or (data[:4] == b"RIFF" and data[8:12] == b"WEBP")
 
 
 def _ext(url: str, data: bytes) -> str:
@@ -75,8 +86,15 @@ async def collect(user_id: str, url: str) -> dict | None:
     if not url:
         return None
     try:
-        data = _download(url)  # 同步下载（线程内阻塞可接受）
-        if not data:
+        import asyncio
+
+        # _download 是同步 urllib 阻塞 → 放线程池，避免卡事件循环
+        data = await asyncio.to_thread(_download, url)
+        if not data or not _is_image_bytes(data):
+            return None  # 非图片内容（HTML 错误页等）不收藏
+        # 收藏上限：超过后拒绝新增（避免本地目录无限膨胀）
+        if count(user_id) >= MAX_STICKERS:
+            logger.info("[表情收藏] {} 已达上限 {}，跳过新增", user_id, MAX_STICKERS)
             return None
         digest = hashlib.md5(data).hexdigest()[:16]
         ext = _ext(url, data)

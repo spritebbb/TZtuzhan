@@ -53,9 +53,34 @@ STAGE_THRESHOLDS = ((0, "初识"), (25, "熟悉"), (50, "亲密"), (75, "恋人"
 
 # 基础辱骂词库（可扩充）
 ABUSE_WORDS = [
-    "傻逼", "煞笔", "沙比", "废物", "垃圾", "去死", "贱人", "畜生",
-    "脑残", "智障", "滚蛋", "恶心", "爬", "sb", "SB", "cnm", "草泥马", "妈的",
+    "傻逼", "煞笔", "沙比", "废物", "去死", "贱人", "畜生",
+    "脑残", "智障", "滚蛋", "cnm", "草泥马",
 ]
+
+# 可能误伤的常用词（如「爬」匹配「爬山」、「垃圾」匹配「垃圾分类」）：命中时需排除
+_ABUSE_WORDS_NEED_CONTEXT = {
+    "垃圾": ("垃圾分类", "垃圾处理", "垃圾回收", "垃圾袋", "垃圾堆"),
+    "恶心": ("吃多了", "有点恶心", "恶心的"),
+    "妈的": ("他妈", "你妈"),
+}
+
+# 英文辱骂词（词界匹配，避免「asb」「sbxi」等子串误伤）
+_ABUSE_EN_WORDS = ("sb", "cnm", "fuck", "shit", "bitch")
+
+
+def check_abuse(text: str) -> bool:
+    lowered = text.lower()
+    # 中文多字词：命中即算，但对易误伤词检查上下文白名单
+    for w in ABUSE_WORDS:
+        if w in lowered and not any(b in lowered for b in _ABUSE_WORDS_NEED_CONTEXT.get(w, ())):
+            return True
+    # 英文词：词界匹配，避免子串误伤
+    import re
+
+    for w in _ABUSE_EN_WORDS:
+        if re.search(rf"(?<![a-z0-9]){re.escape(w)}(?![a-z0-9])", lowered):
+            return True
+    return False
 
 # 不合适的称呼（要求菟菚这样称呼会拒绝并扣好感度，可扩充）
 BAD_ADDRESS_WORDS = [
@@ -81,6 +106,8 @@ CARE_WORDS = [
 
 # 刷屏判定（每用户最近消息时间戳，内存态）
 _timestamps: dict[str, deque[float]] = {}
+# 刷屏已罚标记：同一突发窗口内只罚一次，避免连续扣分
+_spam_triggered: set[str] = set()
 
 
 def stage_of(affection: int) -> str:
@@ -138,19 +165,30 @@ def describe(user_id: str) -> str:
     return line
 
 
-def check_abuse(text: str) -> bool:
-    lowered = text.lower()
-    return any(w in lowered for w in ABUSE_WORDS)
-
-
 def check_bad_address(name: str) -> bool:
     """判断是否为不合适的称呼（侮辱类 / 失当亲属称谓）。"""
     return any(w in name for w in BAD_ADDRESS_WORDS)
 
 
 def check_early_confession(text: str) -> bool:
-    """判断是否为过早的表白/求婚（初识/熟悉阶段触发拒绝）。"""
-    return any(w in text for w in EARLY_CONFESSION_WORDS)
+    """判断是否为过早的表白/求婚（初识/熟悉阶段触发拒绝）。
+
+    排除否定式误判：「我不喜欢你」「别喜欢我」等不应算表白。
+    """
+    if not any(w in text for w in EARLY_CONFESSION_WORDS):
+        return False
+    # 命中词前有否定词 → 不是表白（「不/别/没/不想」）
+    import re
+
+    for w in EARLY_CONFESSION_WORDS:
+        idx = text.find(w)
+        if idx < 0:
+            continue
+        before = text[max(0, idx - 4):idx]
+        if any(neg in before for neg in ("不", "别", "没", "不想", "别想", "才不")):
+            continue
+        return True
+    return False
 
 
 def check_care(text: str) -> bool:
@@ -212,7 +250,23 @@ def _spam_hit(user_id: str) -> bool:
     while q and now - q[0] > _SPAM_WINDOW_SECONDS:
         q.popleft()
     q.append(now)
-    return len(q) >= _SPAM_MAX_COUNT
+    if len(q) >= _SPAM_MAX_COUNT:
+        if user_id in _spam_triggered:
+            return False  # 同一突发窗口内已罚过，不再重复扣
+        _spam_triggered.add(user_id)
+        return True
+    # 窗口已清 → 清除标记，下次突发可重新触发
+    _spam_triggered.discard(user_id)
+    return False
+
+
+def _cleanup_timestamps() -> None:
+    """定期清理不活跃用户的刷屏时间戳（避免内存无界增长）。"""
+    now = datetime.now().timestamp()
+    stale = [uid for uid, q in list(_timestamps.items()) if not q or now - q[-1] > 3600]
+    for uid in stale:
+        _timestamps.pop(uid, None)
+        _spam_triggered.discard(uid)
 
 
 # ---- 每日奖励去重（用 user_meta 表）----
@@ -267,6 +321,10 @@ async def on_message(user_id: str, text: str) -> None:
     user = db.ensure_user(user_id)
     today = date.today()
 
+    # 定期清理不活跃用户的时间戳（每 50 条消息检查一次）
+    if len(_timestamps) > 1000:
+        _cleanup_timestamps()
+
     # ---- 心情更新：用户消息影响菟菚心情（有趣→升，冒犯→降）----
     from .mood import on_user_message as _mood_on_msg, mood_bonus_multiplier
     from .config import config
@@ -305,7 +363,7 @@ async def on_message(user_id: str, text: str) -> None:
                 from .daily import run_daily_batch  # 延迟导入避免循环
 
                 schedule(f"daily:{user_id}:{yesterday}", lambda uid=user_id, d=yesterday: run_daily_batch(uid, d))
-                db.set_chat_date(user_id, today.isoformat(), yesterday.isoformat())
+                db.set_chat_date(user_id, today.isoformat())  # 只设 last_chat_date，batch 标记由 run_daily_batch 执行后完成
             else:
                 db.set_chat_date(user_id, today.isoformat())
         else:

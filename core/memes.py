@@ -19,6 +19,11 @@ _REFRESH_HOURS = 6
 # 单次注入对话的热梗数量上限（避免 prompt 过长）
 INJECT_MAX = 8
 
+# 刷新 in-flight 锁：防止 meme_refresh_loop 与对话触发的 schedule 并发抓取/写缓存
+import threading
+
+_refresh_lock = threading.Lock()
+
 _CACHE_PATH = None
 
 
@@ -59,11 +64,14 @@ def _cache_is_fresh(data: dict) -> bool:
 
 def _save_cached(memes: list[dict]) -> None:
     try:
-        _cache().write_text(
+        # 原子写：先写临时文件再替换，避免并发读读到损坏 JSON / 交错写坏缓存
+        tmp = _cache().with_suffix(".json.tmp")
+        tmp.write_text(
             json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), "memes": memes},
                        ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        tmp.replace(_cache())
     except Exception:
         logger.exception("[热梗] 缓存写入失败")
 
@@ -89,27 +97,34 @@ _REFINE_PROMPT = """你是网络流行语观察员，也是微博热搜的解读
 
 async def _fetch_weibo_hot() -> list[str]:
     """抓微博实时热搜词（前 50 条），失败返回空列表。"""
+    import asyncio
     import urllib.request
     import json as _json
 
-    try:
-        opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({"http": "http://127.0.0.1:10090", "https": "http://127.0.0.1:10090"})
-        )
-        req = urllib.request.Request(
-            "https://weibo.com/ajax/side/hotSearch",
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
-                "Referer": "https://weibo.com/",
-            },
-        )
-        with opener.open(req, timeout=12) as r:
-            data = _json.loads(r.read().decode("utf-8"))
-        items = (data.get("data") or {}).get("realtime") or []
-        return [it.get("word", "") for it in items if it.get("word")][:50]
-    except Exception:
-        logger.warning("[热梗] 微博热搜抓取失败")
-        return []
+    def _sync_fetch() -> list[str]:
+        try:
+            # 优先用环境代理（http_proxy/https_proxy），无环境代理才回退本地 mihomo（10090）
+            proxies = urllib.request.getproxies()
+            if not (proxies.get("http") or proxies.get("https")):
+                proxies = {"http": "http://127.0.0.1:10090", "https": "http://127.0.0.1:10090"}
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+            req = urllib.request.Request(
+                "https://weibo.com/ajax/side/hotSearch",
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+                    "Referer": "https://weibo.com/",
+                },
+            )
+            with opener.open(req, timeout=12) as r:
+                data = _json.loads(r.read().decode("utf-8"))
+            items = (data.get("data") or {}).get("realtime") or []
+            return [it.get("word", "") for it in items if it.get("word")][:50]
+        except Exception:
+            logger.warning("[热梗] 微博热搜抓取失败")
+            return []
+
+    # 同步 urllib 阻塞 → 放线程池，避免卡事件循环
+    return await asyncio.to_thread(_sync_fetch)
 
 
 async def _refine() -> list[dict]:
@@ -136,9 +151,13 @@ async def _refine() -> list[dict]:
         memes = json.loads(text)
         if isinstance(memes, list):
             out = []
+            seen_terms: set[str] = set()
             for m in memes:
                 if isinstance(m, dict) and m.get("term"):
                     term = _clean_term(str(m["term"]).strip()[:40])
+                    if not term or term == "网络热梗" or term in seen_terms:
+                        continue  # 去重：占位词与重复项不重复注入
+                    seen_terms.add(term)
                     meaning = str(m.get("meaning", "")).strip()[:200]
                     example = str(m.get("example", "")).strip()[:120]
                     if not example:
@@ -160,9 +179,13 @@ async def _refine() -> list[dict]:
         memes2 = json.loads(text2)
         if isinstance(memes2, list):
             out2 = []
+            seen2: set[str] = set()
             for m in memes2:
                 if isinstance(m, dict) and m.get("term"):
                     term = _clean_term(str(m["term"]).strip()[:40])
+                    if not term or term == "网络热梗" or term in seen2:
+                        continue
+                    seen2.add(term)
                     meaning = str(m.get("meaning", "")).strip()[:200]
                     example = str(m.get("example", "")).strip()[:120] or f"{term}——{meaning[:40]}"
                     out2.append({"term": term, "meaning": meaning, "example": example})
@@ -182,16 +205,17 @@ async def refresh_memes() -> list[dict]:
     """刷新热梗缓存：微博热搜 + LLM 知识，提炼成最新热梗清单。
 
     bot 启动后立即刷一次，之后每 1 小时后台定时刷新。
-    返回缓存后的清单。
+    返回缓存后的清单。并发调用时（循环 + 对话触发）只跑一次，其余直接拿结果。
     """
-    try:
-        memes = await _refine()
-        if memes:
-            _save_cached(memes)
-            return memes
-    except Exception:
-        logger.exception("[热梗] 刷新失败")
-    return []
+    with _refresh_lock:
+        try:
+            memes = await _refine()
+            if memes:
+                _save_cached(memes)
+                return memes
+        except Exception:
+            logger.exception("[热梗] 刷新失败")
+        return []
 
 
 def get_current_memes(force_refresh: bool = False) -> list[dict]:
@@ -200,8 +224,9 @@ def get_current_memes(force_refresh: bool = False) -> list[dict]:
     force_refresh=True 时即使缓存有效也强制后台刷新（仍返回当前可用清单）。
     """
     data = _load_cached()
+    if force_refresh:
+        schedule_refresh(force=True)
     if data and isinstance(data.get("memes"), list):
-        # 缓存过期但仍有旧数据 → 降级返回旧清单（后台会尝试刷新）
         return data["memes"]
     return []
 
@@ -210,11 +235,12 @@ def has_memes() -> bool:
     return bool(get_current_memes())
 
 
-def schedule_refresh() -> None:
-    """把热梗刷新放到后台（同 key 去重）；缓存过期才触发。"""
-    data = _load_cached()
-    if data is not None and _cache_is_fresh(data):
-        return  # 缓存还有效，不刷
+def schedule_refresh(force: bool = False) -> None:
+    """把热梗刷新放到后台（同 key 去重）；缓存过期或 force 才触发。"""
+    if not force:
+        data = _load_cached()
+        if data is not None and _cache_is_fresh(data):
+            return  # 缓存还有效，不刷
     schedule(memes_refresh_key(), refresh_memes)
 
 

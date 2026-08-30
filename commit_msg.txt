@@ -1,0 +1,35 @@
+质量审计修补：修复 7 个子代理全部 finding（43 处），含本轮新增 14 项修复
+
+本轮修复：
+- search: 搜索词清理（LOW 93）
+- llm: APIConnectionError 可重试 + mock 回显 user（LOW 26/68）
+- userdb: get_today_important_dates 按 year 过滤（MEDIUM 63）
+- schedule: 时段去重校验 + 规则兜底不写缓存（LOW 118/456）
+- profile/terms/style: str(item) 校验 + 失败不推进游标（LOW 152/124/139/116/88）
+- pipeline: _ADDRESS_ASK_WORDS 去裸"叫你"（LOW 72）
+- memory/triple_memory: IDF 默认值一致（LOW 135）
+- memes: 硬编码代理改为环境变量优先（LOW 97）
+- mood: 天气缓存失败兜底 30 分钟 TTL（MEDIUM 184）
+- proactive: _send_burst 返回成功条数，部分发送即标记防重复（MEDIUM 231）
+- 新增 test_review_fixes.py 6 项回归测试
+
+会话前几轮已修：
+- private_chat 插件：4 处 FinishedException、去抖取消竞态、delete_important_date 用户隔离、int(clean)、_cmd_arg 词边界、get_bot try/except、set_address 后 clear_lover_confirm、restart_guess_game
+- userdb: delete_important_date 跨用户、get_mood 不吞 0、reset 13 表、save_important_date 去重、clear_lover_confirm、set_batch_date、recent_messages_with_ids
+- affection: ABUSE 词表重写、check_abuse、spam 单罚、cleanup、early_confession 排除否定、跨天回滚
+- daily: _parse_json dict 守卫、extract_facts 游标、run_daily_batch 幂等
+- memory: compact 游标、recent_messages_with_ids
+- pipeline: web_search to_thread、ADDRESS_RE、extract_address try/except、_extract_reply 思考泄漏、空回复兜底、refresh user、FAREWELL、_user_locks
+- config: _env_float/_env_int；rhythm: jitter 钳制
+- vision/sticker/imagegen: to_thread + 大小限制
+- memes: 异步 + 原子写 + 去重 + 锁 + force 参数
+- mood: _BAD_WORDS、weather 双字优先
+- topic_memory/triple_memory/features/fun
+- proactive: scheduler 循环异常保护
+- cards: 恋人硬编码 + 描述换行
+- message_build: EMOJI 空池
+- draw_context: WANT_RE
+- context: 疑问句剥标点 + TOPIC_CLOSERS 去"没事"
+- intent: 死字段 + _DRAW_WORDS
+- holidays: 清明 + 死代码
+- offline_alert: _mark_alerted 后置

@@ -35,6 +35,8 @@ COMPACT_SECTIONS = [
 
 # 跨会话摘要持久化用的 kv_store key
 _COMPACT_KV_KEY = "compact_summary"
+# 摘要进度游标 key：记录已参与摘要的最后一条消息 id，避免只概括最近窗口、丢掉更早历史
+_COMPACT_CURSOR_KEY = "compact_cursor"
 
 # 疑似回忆触发词：命中才做 LLM 查询扩展（省一次 LLM 调用）
 _RECALL_HINTS = (
@@ -132,7 +134,7 @@ def _tfidf_candidates(
 
     # 查询向量（tf*idf）
     q_tf = Counter(query_terms)
-    q_vec = {t: (q_tf[t] * idf.get(t, math.log(1 + n_docs) + 1)) for t in q_tf}
+    q_vec = {t: (q_tf[t] * idf.get(t, 1)) for t in q_tf}
     q_norm = math.sqrt(sum(v * v for v in q_vec.values())) or 1
 
     scored: list[tuple[float, str]] = []
@@ -199,12 +201,22 @@ async def compact_context(user_id: str, *, mock: bool = False) -> tuple[str, lis
         total = message_count(user_id)
         if total < COMPACT_TOTAL_TRIGGER:
             return None
-        rows = db.recent_messages(user_id, _SHORT_TERM_LIMIT)
-        # 旧部分：最早一批（排除最近完整保留的那些）
-        old_rows = db.recent_messages(user_id, min(COMPACT_OLDER_LIMIT, total))
+        rows = db.recent_messages_with_ids(user_id, _SHORT_TERM_LIMIT)
         recent_count = min(COMPACT_KEEP_RECENT, len(rows))
-        old_rows = old_rows[:-recent_count] if recent_count > 0 else old_rows
+        # 旧部分：游标之后的最早一批（不超过上限），排除最近完整保留的那些。
+        # 用游标而不是"最近 N 条"，避免只概括最新窗口、让更早的历史永远进不了摘要。
+        try:
+            from .userdb import kv_get as _kv_get
+
+            cursor = int(_kv_get(user_id, _COMPACT_CURSOR_KEY) or "0")
+        except Exception:
+            cursor = 0
+        oldest_batch = db.messages_after(user_id, cursor, COMPACT_OLDER_LIMIT)
+        # 排除最近保留的完整消息（它们不在摘要里）
+        keep_ids = {r["id"] for r in rows[-recent_count:]} if recent_count else set()
+        old_rows = [r for r in oldest_batch if r["id"] not in keep_ids]
         if not old_rows:
+            # 全部新消息都在保留区（刚触发过），无需重复摘要
             return None
         transcript = "\n".join(
             f"{'对方' if r['role'] == 'user' else '菟菚'}：{r['content'][:120]}"
@@ -252,6 +264,14 @@ async def compact_context(user_id: str, *, mock: bool = False) -> tuple[str, lis
             summary = _format_section_summary(data) if data else _strip_parens(summary).strip()
         if summary:
             save_compact_summary(user_id, summary)
+        # 推进游标到本次摘要覆盖的最后一条消息（下次从其后开始，滚动覆盖全部历史）
+        try:
+            from .userdb import kv_set as _kv_set
+
+            if old_rows:
+                _kv_set(user_id, _COMPACT_CURSOR_KEY, str(old_rows[-1]["id"]))
+        except Exception:
+            pass
         keep = [{"role": r["role"], "content": r["content"]} for r in rows[-recent_count:]]
         return summary, keep
     except Exception:
@@ -314,9 +334,12 @@ async def _recall_with_expansion(user_id: str, query: str, *, mock: bool = False
 
     # 补充稠密向量检索（把 TF-IDF 没排第一但语义相似度高的结果也拉进来）
     try:
+        import asyncio as _asyncio
         from .vector_store import search as vec_search
 
-        vec_results = vec_search(user_id, query, LONG_TERM_TOP_K)
+        vec_results = await _asyncio.to_thread(
+            vec_search, user_id, query, LONG_TERM_TOP_K, "lm"
+        )
         if vec_results:
             # 按 record_id 反查内容
             existing_ids = set()
@@ -358,9 +381,12 @@ async def _facts_with_expansion(user_id: str, query: str, *, mock: bool = False)
 
     # 补充稠密向量检索
     try:
+        import asyncio as _asyncio
         from .vector_store import search as vec_search
 
-        vec_results = vec_search(user_id, query, LONG_TERM_TOP_K)
+        vec_results = await _asyncio.to_thread(
+            vec_search, user_id, query, LONG_TERM_TOP_K, "facts"
+        )
         if vec_results:
             existing_ids = set()
             vec_docs: list[str] = []

@@ -16,6 +16,7 @@ def jitter(base: float, ratio: float | None = None) -> float:
     """返回带随机抖动的延迟秒数（>=0）。ratio 默认取 config.delay_jitter。"""
     r = config.delay_jitter if ratio is None else ratio
     r = max(0.0, min(1.0, float(r)))
+    base = max(0.0, float(base))  # 钳制 base 非负，保证契约 >=0
     low = base * (1.0 - r)
     high = base * (1.0 + r)
-    return random.uniform(low, high)
+    return max(0.0, random.uniform(low, high))

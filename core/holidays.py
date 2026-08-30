@@ -12,7 +12,8 @@ _SOLAR_HOLIDAYS = {
     "02-14": "情人节",
     "03-08": "妇女节",
     "03-12": "植树节",
-    "04-05": "清明节",  # 清明按节气通常在4-4~4-5
+    "04-04": "清明节",  # 清明是节气，公历日期在 4/4~4/5 浮动（近年在 4/4 居多）
+    "04-05": "清明节",
     "05-01": "劳动节",
     "06-01": "儿童节",
     "07-01": "建党节",
@@ -46,22 +47,13 @@ def _lunar_holidays_for(year: int) -> dict[str, str]:
             out[mmdd] = name
         except Exception:
             logger.warning("[节日] 农历节日计算失败：{}-{} {}", lunar_month, lunar_day, name)
-    # 除夕：农历腊月最后一天（查腊月30或29）
+    # 除夕：农历春节前一天（公历日期 = 春节 - 1 天）
     try:
-        # 从农历腊月30开始，如果不存在则用29
-        for day in (30, 29):
-            try:
-                new_year = ZhDate(year, 1, 1).to_datetime().date()
-                # 除夕 = 春节前一天
-                chuxi = new_year.isoformat()
-                # 用公历减法
-                import datetime
+        import datetime
 
-                chuxi_date = datetime.date.fromisoformat(chuxi) - datetime.timedelta(days=1)
-                out[chuxi_date.strftime("%m-%d")] = "除夕"
-                break
-            except ValueError:
-                continue
+        new_year = ZhDate(year, 1, 1).to_datetime().date()
+        chuxi_date = new_year - datetime.timedelta(days=1)
+        out[chuxi_date.strftime("%m-%d")] = "除夕"
     except Exception:
         pass
     return out

@@ -96,15 +96,23 @@ def _vec_str(vec: list[float]) -> str:
     return json.dumps(vec, separators=(",", ":"))
 
 
-def index(user_id: str, record_id: int, text: str) -> bool:
-    """给一条记忆记录建向量索引。成功返回 True，失败返回 False（不阻塞）。"""
+def index(
+    user_id: str, record_id: int, text: str, kind: str = "lm"
+) -> bool:
+    """给一条记忆记录建向量索引。成功返回 True，失败返回 False（不阻塞）。
+
+    Args:
+        user_id: 用户 id
+        kind: 记录类型 — "lm"（long_memory）或 "facts"（facts）
+        record_id: 该类型记录的主键 id
+        text: 文本内容
+    """
     try:
         vec = embed(text)
         if not vec:
             return False
-        key = f"{user_id}:{record_id}"
+        key = f"{user_id}:{kind}:{record_id}"
         conn = _vconn()
-        # 先删旧索引再插入（UPSERT 语义）
         conn.execute("DELETE FROM vec_memory WHERE id = ?", (key,))
         conn.execute(
             "INSERT INTO vec_memory (id, text_embedding) VALUES (?, ?)",
@@ -113,15 +121,20 @@ def index(user_id: str, record_id: int, text: str) -> bool:
         conn.commit()
         return True
     except Exception:
-        logger.warning("[向量] 建索引失败：{}:{}", user_id, record_id)
+        logger.warning("[向量] 建索引失败：{}:{}:{}", user_id, kind, record_id)
         return False
 
 
-def search(user_id: str, query: str, top_k: int = 5) -> list[tuple[int, float]]:
+def search(
+    user_id: str, query: str, top_k: int = 5, kind: str | None = None
+) -> list[tuple[int, float]]:
     """向量检索，返回 [(record_id, distance), ...]（distance 越小越相似）。
 
-    vec0 KNN 查询用 `k = ?` 内嵌限制条数；user_id 过滤在 Python 侧做
-    （vec0 的 MATCH 不支持与 LIKE/WHERE 组合）。
+    Args:
+        user_id: 用户 id
+        query: 查询文本
+        top_k: 返回条数
+        kind: 过滤类型 — "lm"、"facts" 或 None（不过滤所有类型）
     """
     try:
         vec = embed(query)
@@ -130,17 +143,18 @@ def search(user_id: str, query: str, top_k: int = 5) -> list[tuple[int, float]]:
         conn = _vconn()
         rows = conn.execute(
             "SELECT id, distance FROM vec_memory WHERE text_embedding MATCH ? AND k = ?",
-            (_vec_str(vec), top_k * 3),  # 多取一些再按 user 过滤
+            (_vec_str(vec), top_k * 3),
         ).fetchall()
+        prefix = f"{user_id}:{kind}:" if kind else f"{user_id}:"
         out = []
-        prefix = f"{user_id}:"
         for r in rows:
             rid_str = r["id"]
             if not rid_str.startswith(prefix):
                 continue
             try:
-                out.append((int(rid_str.split(":", 1)[1]), r["distance"]))
-            except ValueError:
+                parts = rid_str.split(":", maxsplit=2)
+                out.append((int(parts[2]), r["distance"]))
+            except (ValueError, IndexError):
                 continue
         out.sort(key=lambda x: x[1])
         return out[:top_k]
@@ -163,36 +177,43 @@ def backfill(user_id: str = "", limit: int = 1000) -> int:
 
     遍历 long_memory + facts 里还没有向量索引的记录，逐条建索引。
     返回本次新建的条数。失败静默（下次启动再补）。
+
+    注意：按表分 kind 命名空间，避免两表 id 冲突覆盖索引。
     """
     from .userdb import db
 
     built = 0
     try:
         conn = _vconn()
-        for table in ("long_memory", "facts"):
-            rows = db.conn.execute(
-                f"SELECT id, user_id, content FROM {table} ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-            for row in rows:
-                rid, uid, content = row["id"], row["user_id"], row["content"]
-                if user_id and uid != user_id:
-                    continue
-                # 与 index() 一致的 key 格式：{user_id}:{record_id}
-                key = f"{uid}:{rid}"
-                exists = conn.execute(
-                    "SELECT 1 FROM vec_memory WHERE id=?", (key,)
-                ).fetchone()
-                if exists:
-                    continue
-                vec = embed(content)
-                if not vec:
-                    continue
-                conn.execute(
-                    "INSERT INTO vec_memory (id, text_embedding) VALUES (?, ?)",
-                    (key, _vec_str(vec)),
-                )
-                built += 1
+        for table, kind in (("long_memory", "lm"), ("facts", "facts")):
+            # 全表扫描 + 逐条 exists 判断；分批取避免一次加载过多
+            last_id = 0
+            while True:
+                rows = db.conn.execute(
+                    "SELECT id, user_id, content FROM {} WHERE id > ? ORDER BY id LIMIT ?".format(table),
+                    (last_id, limit),
+                ).fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    rid, uid, content = row["id"], row["user_id"], row["content"]
+                    last_id = rid
+                    if user_id and uid != user_id:
+                        continue
+                    key = f"{uid}:{kind}:{rid}"
+                    exists = conn.execute(
+                        "SELECT 1 FROM vec_memory WHERE id=?", (key,)
+                    ).fetchone()
+                    if exists:
+                        continue
+                    vec = embed(content)
+                    if not vec:
+                        continue
+                    conn.execute(
+                        "INSERT INTO vec_memory (id, text_embedding) VALUES (?, ?)",
+                        (key, _vec_str(vec)),
+                    )
+                    built += 1
         conn.commit()
         if built:
             logger.info("[向量] 存量回填完成，新增 {} 条索引", built)

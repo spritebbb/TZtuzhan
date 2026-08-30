@@ -43,7 +43,7 @@ def _build_message(text: str) -> Message:
 
 def _maybe_append_emoji(chunks: list[str]) -> list[str]:
     """给回复的某一条末尾随机加一个 QQ 表情；偶尔加（概率 _EMOJI_PROB）。"""
-    if not chunks or random.random() >= _EMOJI_PROB:
+    if not chunks or random.random() >= _EMOJI_PROB or not _EMOJI_POOL:
         return chunks
     idx = random.randrange(len(chunks))
     fid = random.choice(_EMOJI_POOL)

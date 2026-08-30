@@ -62,7 +62,12 @@ _FUN_RE = re.compile(r"(好笑|哈哈|笑死|太逗|有趣|好玩|梗|笑不活|
 # 关心/温暖的话
 _CARE_RE = re.compile(r"(你还好吗|你没事吧|累不累|辛苦了|你也要休息|照顾好自己|别太累|担心你|想你|想你了|抱抱|摸摸)")
 # 冒犯/让菟菚不舒服的话（辱骂、轻视、命令口吻）
-_BAD_RE = re.compile(r"(傻逼|煞笔|沙比|废物|垃圾|去死|贱人|畜生|脑残|智障|滚|sb|SB|cnm|恶心|爬|真没意思|无聊死了)")
+# 只用多字词：单字（爬/滚/垃圾）会误伤「爬山/翻滚/垃圾分类」等普通词。
+_BAD_WORDS = (
+    "傻逼", "煞笔", "沙比", "废物", "去死", "贱人", "畜生",
+    "脑残", "智障", "cnm", "草泥马", "真没意思", "无聊死了", "恶心死了", "滚蛋",
+)
+_BAD_RE = re.compile("|".join(re.escape(w) for w in _BAD_WORDS))
 # 分享开心的事（好消息、成就、喜欢的东西）
 _GOOD_NEWS_RE = re.compile(r"(升职|加薪|考上了|成功|中了|赢|过啦|通过了|第一次|今天好开心|超喜欢|好高兴|太好啦|太好了)")
 
@@ -88,7 +93,21 @@ def idle_decay(hours_idle: float) -> int:
 
 
 # ---- 天气获取（搜索优先，免费 API 备用）----
-_WEATHER_CACHE: dict[str, tuple[date, str, int]] = {}  # user_id → (date, weather, baseline)
+_WEATHER_CACHE: dict[str, tuple[date, str, int, datetime]] = {}  # city → (date, weather, baseline, fetched_at)
+
+
+def _weather_cache_get(city: str, today: date) -> tuple[str, int] | None:
+    """读缓存；天气为「未知」（上次获取失败）时只信任 30 分钟内，超时重新获取。"""
+    cached = _WEATHER_CACHE.get(city)
+    if not cached or cached[0] != today:
+        return None
+    weather, base, fetched = cached[1], cached[2], cached[3]
+    if weather != "未知":
+        return weather, base
+    # 上次失败：30 分钟内不重试（避免频繁请求），超时允许重试
+    if (datetime.now() - fetched).total_seconds() < 1800:
+        return weather, base
+    return None
 
 
 def _weather_via_search(city: str) -> str | None:
@@ -99,7 +118,8 @@ def _weather_via_search(city: str) -> str | None:
         results = web_search(f"{city} 今天 天气", max_results=3)
         for r in results:
             text = (r.get("snippet") or "") + " " + (r.get("title") or "")
-            for kw in _WEATHER_BASE:
+            # 先匹配双字词（多云/沙尘），避免单字「风」误配「风格」等
+            for kw in ("沙尘", "多云", "晴", "阴", "雨", "雪", "雷", "雾", "霾", "风"):
                 if kw in text:
                     return kw
     except Exception:
@@ -155,22 +175,24 @@ def _weather_via_wttr(city: str) -> str | None:
 def today_weather(city: str) -> tuple[str, int]:
     """获取今日天气与心情基线：搜索优先 → wttr.in 备用 → 时间基线兜底。
 
-    返回 (天气描述, 心情基线)。结果缓存当天，避免反复请求。
+    返回 (天气描述, 心情基线)。成功结果缓存当天；失败兜底只缓存 30 分钟，
+    之后允许重新获取（避免网络抖动一次失败锁死全天天气）。
     """
     today = date.today()
-    cached = _WEATHER_CACHE.get(city)
-    if cached and cached[0] == today:
-        return cached[1], cached[2]
+    cached = _weather_cache_get(city, today)
+    if cached:
+        return cached
 
     weather = _weather_via_search(city) or _weather_via_wttr(city)
+    now = datetime.now()
     if weather:
         base = weather_baseline(weather)
         if base is not None:
-            _WEATHER_CACHE[city] = (today, weather, base)
+            _WEATHER_CACHE[city] = (today, weather, base, now)
             return weather, base
 
     # 兜底：按时间段/季节给一个温和基线
-    hour = datetime.now().hour
+    hour = now.hour
     if 5 <= hour < 11:
         base = 62
     elif 11 <= hour < 14:
@@ -181,7 +203,7 @@ def today_weather(city: str) -> tuple[str, int]:
         base = 66
     else:
         base = 55
-    _WEATHER_CACHE[city] = (today, "未知", base)
+    _WEATHER_CACHE[city] = (today, "未知", base, now)
     return "未知", base
 
 

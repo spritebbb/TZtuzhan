@@ -41,7 +41,10 @@ _DOWNLOAD_MAX_BYTES = 10 * 1024 * 1024  # 下载上限 10MB（防超大图片拖
 
 def _download(url: str, timeout: int = 20) -> bytes:
     if url.startswith("data:"):
-        return base64.b64decode(url.split(",", 1)[1])
+        data = base64.b64decode(url.split(",", 1)[1])
+        if len(data) > _DOWNLOAD_MAX_BYTES:
+            raise ValueError(f"图片超过 {_DOWNLOAD_MAX_BYTES // 1024 // 1024}MB，拒绝识别")
+        return data
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         data = r.read(_DOWNLOAD_MAX_BYTES + 1)
@@ -55,7 +58,10 @@ async def describe_image(url: str) -> str:
     if not config.vision_model:
         return ""
     try:
-        data = _download(url)
+        import asyncio
+
+        # _download 是同步 urllib 阻塞 → 放线程池，避免卡事件循环
+        data = await asyncio.to_thread(_download, url)
         mime = _guess_mime(data)
         data_url = f"data:{mime};base64," + base64.b64encode(data).decode()
         client = get_vision_client()

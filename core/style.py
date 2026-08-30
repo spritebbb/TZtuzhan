@@ -72,20 +72,26 @@ async def extract_style_map(user_id: str, *, rows=None, done=0) -> bool:
             text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         data = json.loads(text)
     except Exception:
-        logger.exception("[风格] {} 提炼失败", user_id)
-        db.set_last_profile_msg_id(user_id, done)
+        # 失败不推进游标：保留这批消息，下次提炼仍能重试（避免永久丢数据）
+        logger.exception("[风格] {} 提炼失败（不推进游标，稍后重试）", user_id)
         return False
 
     if not isinstance(data, dict):
-        db.set_last_profile_msg_id(user_id, done)
+        logger.warning("[风格] {} 提炼返回格式异常（不推进游标）", user_id)
         return False
+    seen_situations: set[str] = set()
     for item in data.get("styles") or []:
         if not isinstance(item, dict):
             continue
         s = str(item.get("situation", "")).strip()[:40]
         st = str(item.get("style", "")).strip()[:60]
-        if s and st:
-            db.add_style_map(user_id, s, st)
+        if not (s and st):
+            continue
+        # 同场景只保留一条（LLM 多次提炼可能用词略不同，避免重复堆积）
+        if s in seen_situations:
+            continue
+        seen_situations.add(s)
+        db.add_style_map(user_id, s, st)
     db.set_last_profile_msg_id(user_id, done)
     return True
 

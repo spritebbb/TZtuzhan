@@ -63,9 +63,11 @@ async def extract_topic(user_id: str, *, mock: bool = False) -> str | None:
     用独立的 last_topic_msg_id 游标避免反复提炼同一段对话。
     """
     try:
-        # 游标：基于最近的消息提炼，成功后推进到当前最大 id
+        # 游标：只从最新消息里提炼，确保概括的是最近对话
         last_base = int(_kv_get(user_id, "last_topic_msg_id") or "0")
-        rows = db.messages_after(user_id, last_base, 20)
+        # 取最近 20 条带 id 的消息（按时间升序），只保留游标之后的新消息
+        all_recent = db.recent_messages_with_ids(user_id, 20)
+        rows = [r for r in all_recent if r["id"] > last_base]
         if len(rows) < TOPIC_MIN_MESSAGES:
             return None
         max_id = rows[-1]["id"]

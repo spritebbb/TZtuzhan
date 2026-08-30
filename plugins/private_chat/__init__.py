@@ -9,6 +9,7 @@ from pathlib import Path
 
 from nonebot import on_command, on_message
 from nonebot.adapters.onebot.v11 import Message, MessageSegment, PrivateMessageEvent
+from nonebot.exception import FinishedException
 
 from core import affection
 from core.config import config
@@ -56,12 +57,21 @@ def _cmd_arg(plain: str, *names: str) -> str:
     这里把 / 前缀 + 任一命令名/别名 剥掉，只留参数部分。
     """
     text = plain.strip()
-    for name in names:
+    # 按名称长度降序匹配：避免短名（如「画」）先匹配到长别名（如「画画」）的头部，误剥半个词
+    for name in sorted(names, key=len, reverse=True):
         # 命令名可能带 / 前缀（NoneBot 默认命令前缀），也可能不带
         for prefix in (f"/{name}", name):
-            if text.startswith(prefix):
+            if text.startswith(prefix) and _cmd_has_boundary(text, len(prefix)):
                 return text[len(prefix):].strip()
     return text
+
+
+def _cmd_has_boundary(text: str, idx: int) -> bool:
+    """命令名后应是空白/标点/结尾（词边界），避免「画」误配「画画 猫」取走半个词。"""
+    if idx >= len(text):
+        return True
+    nxt = text[idx]
+    return nxt.isspace() or nxt in "，,。！？!?（()）【】"
 
 
 @proactive_cmd.handle()
@@ -112,6 +122,7 @@ async def handle_draw(event: PrivateMessageEvent):
 # 消息去抖合并：用户连发消息时，等待用户把话说完，再合并成一条整体处理
 _pending_items: dict[str, list[dict]] = {}  # user_id → [{text, extras, images}]
 _debounce_tasks: dict[str, asyncio.Task] = {}  # user_id → asyncio.Task
+_processing: set[str] = set()  # flush 正在处理中的用户（避免取消已 pop 的 task）
 
 
 @private_msg.handle()
@@ -146,7 +157,9 @@ async def handle_private(event: PrivateMessageEvent):
     )
     task = _debounce_tasks.get(user_id)
     if task:
-        task.cancel()
+        # 只有还在观察期（未开始处理）才取消；正在处理中的不打断，避免消息丢失
+        if user_id not in _processing:
+            task.cancel()
     _debounce_tasks[user_id] = asyncio.create_task(_debounce_flush(user_id))
 
 
@@ -158,16 +171,23 @@ async def _debounce_flush(user_id: str) -> None:
     """
     try:
         await asyncio.sleep(config.debounce_seconds)  # 观察窗口：等用户不再连发
-        items = _pending_items.pop(user_id, [])
-        _debounce_tasks.pop(user_id, None)
-        if not items:
-            return
+    except asyncio.CancelledError:
+        return  # 观察期内被取消：消息仍在 _pending_items，新任务会处理
+
+    items = _pending_items.pop(user_id, [])
+    _debounce_tasks.pop(user_id, None)
+    if not items:
+        return
+    # 标记处理中：新消息到达时不再取消本任务（避免已 pop 的消息丢失）
+    _processing.add(user_id)
+    try:
         # 在异步 task 里不能依赖 event.bot（context 已失效），用 get_bot() 取当前 bot
         from nonebot import get_bot
 
-        bot = get_bot()
-        if bot is None:
-            logger.warning("[去抖] {} 的 bot 引用为空，跳过回复", user_id)
+        try:
+            bot = get_bot()
+        except ValueError:
+            logger.warning("[去抖] {} 无可用 bot，跳过回复", user_id)
             return
         # 合并连发消息为一段文本（用换行连接，标记成对方连续说的一段话）
         merged_parts: list[str] = []
@@ -227,54 +247,70 @@ async def _debounce_flush(user_id: str) -> None:
             reply = f"……藤蔓打结了\n（{e}）"
         # 发送回复（用 bot API 直接发，不依赖 matcher）
         await _send_reply_to(bot, user_id, reply)
-        logger.info("[去抖] {} 回复完成：{}", user_id, reply[:30])
-        # 副动作：收到纯图 → 只说一句话（回应+收藏意图，不叠加第二句配话）
+    except asyncio.CancelledError:
+        # 处理中被取消（不应发生，但兜底）：把已取出的消息放回队列，避免丢失
+        _pending_items.setdefault(user_id, []).extend(items)
+        raise
+    finally:
+        _processing.discard(user_id)
+        # 处理期间又有新消息 → 补一次 flush（不丢消息）
+        if _pending_items.get(user_id) and user_id not in _debounce_tasks:
+            _debounce_tasks[user_id] = asyncio.create_task(_debounce_flush(user_id))
+        try:
+            await _after_flush_side_effects(bot, user_id, items, incoming_images)
+        except Exception:
+            logger.exception("[去抖] 回复 {} 收尾失败", user_id)
+
+
+async def _after_flush_side_effects(bot, user_id: str, items: list[dict], incoming_images: list[str]) -> None:
+    """flush 收尾的副动作：收到纯图 → 回应 + 收藏 + 回发一张。失败不影响主回复已发出。"""
+    try:
         has_text = bool(items[0]["text"].strip()) or any(it["text"].strip() for it in items)
-        if incoming_images and not has_text:
-            # ① 收到表情包先回应一句（含"我存了/收进仓库"的收藏意味），失败回退固定话
+        if not incoming_images or has_text:
+            return
+        # ① 收到表情包先回应一句（含"我存了/收进仓库"的收藏意味），失败回退固定话
+        try:
+            from core.speak import on_receive_img
+
+            first_url = incoming_images[0]
+            img_desc = await describe_image(first_url) if first_url else ""
+            ack = await on_receive_img(img_desc)
+            if ack:
+                await _send_reply_to(bot, user_id, ack)
+        except Exception:
+            logger.exception("[话术] 收到图片回应失败")
+        # ② 收藏（回发时带一句自然话；但用视觉描述作话题，避免固定词）
+        just_collected: list[str] = []  # 本次刚收藏的文件路径，回发时排除（不能把对方刚发的原样奉还）
+        for url in incoming_images:
+            rec = await collect_sticker(user_id, url)
+            if rec and rec.get("file"):
+                just_collected.append(rec["file"])
+        # ③ 按情绪/语境挑一张「别的」收藏回发：优先情绪匹配（可关），其次同主题，再随机，都排除刚发的
+        sticker = None
+        try:
+            from core.features import flag
+            from core.sticker import guess_emotions, pick_by_emotion
+
+            if flag("emotion_sticker_enabled"):
+                emo = guess_emotions(img_desc or "")
+                if emo:
+                    sticker = pick_by_emotion(user_id, emo.split(",")[0], 5, exclude_files=set(just_collected))
+        except Exception:
+            logger.exception("[表情回发] 情绪匹配失败，回退话题")
+        if not sticker:
+            sticker = pick_sticker(user_id, img_desc or "", 5, exclude_files=set(just_collected))
+        if sticker:
             try:
-                from core.speak import on_receive_img
+                from core.speak import with_sticker
 
-                first_url = incoming_images[0]
-                img_desc = await describe_image(first_url) if first_url else ""
-                ack = await on_receive_img(img_desc)
-                if ack:
-                    await _send_reply_to(bot, user_id, ack)
+                talk = await with_sticker(img_desc or "你发来的表情包")
+                if talk:
+                    await _send_reply_to(bot, user_id, talk)
             except Exception:
-                logger.exception("[话术] 收到图片回应失败")
-            # ② 收藏（回发时带一句自然话；但用视觉描述作话题，避免固定词）
-            just_collected: list[str] = []  # 本次刚收藏的文件路径，回发时排除（不能把对方刚发的原样奉还）
-            for url in incoming_images:
-                rec = await collect_sticker(user_id, url)
-                if rec and rec.get("file"):
-                    just_collected.append(rec["file"])
-            # ③ 按情绪/语境挑一张「别的」收藏回发：优先情绪匹配（可关），其次同主题，再随机，都排除刚发的
-            sticker = None
-            try:
-                from core.features import flag
-                from core.sticker import guess_emotions, pick_by_emotion
-
-                if flag("emotion_sticker_enabled"):
-                    emo = guess_emotions(img_desc or "")
-                    if emo:
-                        sticker = pick_by_emotion(user_id, emo.split(",")[0], 5, exclude_files=set(just_collected))
-            except Exception:
-                logger.exception("[表情回发] 情绪匹配失败，回退话题")
-            if not sticker:
-                sticker = pick_sticker(user_id, img_desc or "", 5, exclude_files=set(just_collected))
-            if sticker:
-                try:
-                    from core.speak import with_sticker
-
-                    talk = await with_sticker(img_desc or "你发来的表情包")
-                    if talk:
-                        await _send_reply_to(bot, user_id, talk)
-                except Exception:
-                    logger.exception("[话术] 发表情包话术失败")
-                await _send_sticker_to(bot, user_id, sticker[0])
+                logger.exception("[话术] 发表情包话术失败")
+            await _send_sticker_to(bot, user_id, sticker[0])
     except Exception:
-        logger.exception("[去抖] 回复 {} 失败", user_id)
-        return
+        logger.exception("[去抖] 回复 {} 收尾失败", user_id)
 
 
 def _split_reply(reply: str, max_len: int = 26) -> list[str]:
@@ -406,6 +442,7 @@ async def handle_set_address(event: PrivateMessageEvent):
         db.update_affection(str(event.user_id), affection.BAD_ADDRESS_PENALTY, "要求不合适的称呼")
         await set_address_cmd.finish(Message("这个称呼，我不喜欢呢……换一个吧。"))
     db.set_nickname(str(event.user_id), name)
+    db.clear_lover_confirm(str(event.user_id))  # 称呼已确认，停止 persona 的"记得确认"注入
     await set_address_cmd.finish(Message(f"好，以后就这么叫你：{name}"))
 
 
@@ -425,6 +462,8 @@ async def handle_mood(event: PrivateMessageEvent):
             mood_mod.update_mood(uid, int(clean) - mood_mod.current_mood(uid, city=config.mood_city)[0], city=config.mood_city)
             await mood_cmd.finish(Message("已设置 -> " + mood_mod.describe(uid, city=config.mood_city)))
         await _finish_mood_card(mood_cmd, uid)
+    except FinishedException:
+        raise  # finish() 正常终止，勿当异常处理
     except Exception:
         logger.exception("[心情] 查询失败")
         await mood_cmd.finish(Message("心情系统暂时没反应……过会儿再问我吧"))
@@ -453,8 +492,12 @@ async def _finish_mood_card(matcher, uid: str, prefix: str = "当前 ") -> None:
 
                 await matcher.finish(Message(prefix + MessageSegment.image(file=image_bytes(png))))
                 return
+            except FinishedException:
+                raise
             except Exception:
                 logger.exception("[心情] 卡片发送失败，回退文本")
+    except FinishedException:
+        raise
     except Exception:
         logger.exception("[心情] 卡片渲染失败，回退文本")
     await matcher.finish(Message(prefix + mood_mod.describe(uid, city=config.mood_city)))
@@ -485,9 +528,13 @@ async def handle_schedule(event: PrivateMessageEvent):
 
                 await schedule_cmd.finish(Message(MessageSegment.image(file=image_bytes(png))))
                 return
+            except FinishedException:
+                raise
             except Exception:
                 logger.exception("[日程] 卡片发送失败，回退文本")
         await schedule_cmd.finish(Message(schedule_describe(uid, city=config.mood_city)))
+    except FinishedException:
+        raise
     except Exception:
         logger.exception("[日程] 查询失败")
         await schedule_cmd.finish(Message("我的日程表乱成一团了……过会儿再问我吧"))
@@ -595,7 +642,7 @@ async def handle_aff(event: PrivateMessageEvent):
         await _finish_affection_card(aff_cmd, event, uid)
         return
     try:
-        affection.set_affection(uid, int(text))
+        affection.set_affection(uid, int(clean))
         await _finish_affection_card(aff_cmd, event, uid, prefix="已设置 -> ")
     except ValueError:
         await aff_cmd.finish(Message("用法：/好感 80 或 /好感（查看当前），也可用 /aff"))
@@ -626,6 +673,8 @@ async def _finish_affection_card(matcher, event, uid: str, prefix: str = "当前
 
             await matcher.finish(Message(prefix + MessageSegment.image(file=image_bytes(png))))
             return
+        except FinishedException:
+            raise
         except Exception:
             logger.exception("[好感] 卡片发送失败，回退文本")
     await matcher.finish(Message(prefix + affection.describe(uid)))
@@ -671,8 +720,8 @@ async def handle_dates(event: PrivateMessageEvent):
     # 删除
     m_del = re.match(r"^删除\s*(\d+)$", text)
     if m_del:
-        delete_important_date(int(m_del.group(1)))
-        await dates_cmd.finish(Message("嗯，这个日子我忘掉了。"))
+        ok = delete_important_date(int(m_del.group(1)), uid)
+        await dates_cmd.finish(Message("嗯，这个日子我忘掉了。" if ok else "没找到那条记录……"))
 
     # 设置：日期 + 名称
     m_set = re.match(r"^(\d{1,2})[-/\.](\d{1,2})\s+(.+)$", text)
@@ -719,10 +768,12 @@ async def handle_guess(event: PrivateMessageEvent):
         return
     uid = str(event.user_id)
     text = _cmd_arg(event.get_plaintext(), "猜数字", "猜数", "来猜数字")
-    from core.fun import guess_number, start_guess_game
+    from core.fun import guess_number, restart_guess_game, start_guess_game
 
     if text and text.isdigit():
         reply = guess_number(uid, int(text))
+    elif text and text.strip() in ("重新", "重开", "重新猜", "重新猜数字"):
+        reply = restart_guess_game(uid)
     else:
         reply = start_guess_game(uid)
     await guess_cmd.finish(Message(reply))

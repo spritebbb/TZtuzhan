@@ -221,7 +221,7 @@ class UserDB:
         ).fetchone()
         if not row:
             return 60, None
-        return row["mood_value"] or 60, row["mood_updated_at"]
+        return (60 if row["mood_value"] is None else row["mood_value"]), row["mood_updated_at"]
 
     def set_mood(self, user_id: str, mood: int) -> None:
         """写入心情值（0-100）并更新时间戳。"""
@@ -281,6 +281,13 @@ class UserDB:
         )
         self.conn.commit()
 
+    def clear_lover_confirm(self, user_id: str) -> None:
+        """二次确认称呼完成 → 清除标志，停止 persona 的"记得确认"注入。"""
+        self.conn.execute(
+            "UPDATE users SET lover_confirm = 0 WHERE user_id = ?", (user_id,)
+        )
+        self.conn.commit()
+
     def set_first_chat_done(self, user_id: str) -> None:
         self.conn.execute(
             "UPDATE users SET first_chat_done = 1 WHERE user_id = ?", (user_id,)
@@ -299,6 +306,13 @@ class UserDB:
             )
         self.conn.commit()
 
+    def set_batch_date(self, user_id: str, day: str) -> None:
+        """单独推进「每日总结已执行」日期（batch 实际完成后再标记，避免提前标记丢任务）。"""
+        self.conn.execute(
+            "UPDATE users SET last_batch_date = ? WHERE user_id = ?", (day, user_id)
+        )
+        self.conn.commit()
+
     # ---- messages ----
     def add_message(self, user_id: str, role: str, content: str) -> None:
         self.conn.execute(
@@ -310,6 +324,14 @@ class UserDB:
     def recent_messages(self, user_id: str, limit: int):
         return self.conn.execute(
             "SELECT role, content FROM messages WHERE user_id = ? "
+            "ORDER BY id DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()[::-1]
+
+    def recent_messages_with_ids(self, user_id: str, limit: int):
+        """最近 limit 条消息（含 id，按时间升序）。供需要推进游标的场景。"""
+        return self.conn.execute(
+            "SELECT id, role, content, ts FROM messages WHERE user_id = ? "
             "ORDER BY id DESC LIMIT ?",
             (user_id, limit),
         ).fetchall()[::-1]
@@ -542,19 +564,20 @@ class UserDB:
     # ---- 场景化表达风格（user_style_map）----
 
     def add_style_map(self, user_id: str, situation: str, style: str) -> bool:
-        """记录「场景→表达方式」；同场景同风格视为重复只累加次数。"""
+        """记录「场景→表达方式」；同场景视为重复：累加次数并更新最新 style（去重键按场景而非场景+风格，避免近似表述重复堆积）。"""
         situation = situation.strip()[:40]
         style = style.strip()[:60]
         if not situation or not style:
             return False
         now = datetime.now().isoformat(timespec="seconds")
         row = self.conn.execute(
-            "SELECT id FROM user_style_map WHERE user_id = ? AND situation = ? AND style = ?",
-            (user_id, situation, style),
+            "SELECT id FROM user_style_map WHERE user_id = ? AND situation = ?",
+            (user_id, situation),
         ).fetchone()
         if row:
             self.conn.execute(
-                "UPDATE user_style_map SET count = count + 1 WHERE id = ?", (row["id"],)
+                "UPDATE user_style_map SET count = count + 1, style = ? WHERE id = ?",
+                (style, row["id"]),
             )
             self.conn.commit()
             return False
@@ -661,7 +684,12 @@ class UserDB:
             self.conn.executescript(_SCHEMA)
         else:
             self.conn.execute("PRAGMA busy_timeout = 5000")
-            for table in ("affection_log", "long_memory", "facts", "user_meta", "messages", "users"):
+            # 文件删除失败（被占用）时退化的清空路径：覆盖全部业务表
+            for table in (
+                "affection_log", "long_memory", "facts", "user_meta", "messages",
+                "users", "kv_store", "important_dates", "stickers",
+                "user_profile", "user_terms", "user_style_map", "diary", "triples",
+            ):
                 self.conn.execute(f"DELETE FROM {table}")
         self.conn.commit()
 
@@ -676,21 +704,43 @@ def _bigrams(text: str) -> set[str]:
 # ---- important_dates（情感记忆：生日/纪念日/特殊日子）----
 
 
-def save_important_date(user_id: str, date_str: str, label: str, kind: str = "other", year: int | None = None) -> None:
-    """保存一个特殊日子。date_str 格式为 'MM-DD'（如 '12-25'）。"""
+def save_important_date(user_id: str, date_str: str, label: str, kind: str = "other", year: int | None = None) -> bool:
+    """保存一个特殊日子。date_str 格式为 'MM-DD'（如 '12-25'）。
+
+    去重：同用户、同日、同标签 已存在时不重复插入（返回 False），
+    仅当新信息（kind/year）更全时更新。返回是否新增。
+    """
+    row = db.conn.execute(
+        "SELECT id, kind, year FROM important_dates WHERE user_id = ? AND date = ? AND label = ?",
+        (user_id, date_str, label),
+    ).fetchone()
+    if row:
+        # 已存在：补全缺失的 kind/year（如首次识别没年份、复盘补上了）
+        if (not row["kind"] or row["kind"] == "other") and kind != "other":
+            db.conn.execute(
+                "UPDATE important_dates SET kind = ? WHERE id = ?", (kind, row["id"])
+            )
+        if row["year"] is None and year is not None:
+            db.conn.execute(
+                "UPDATE important_dates SET year = ? WHERE id = ?", (year, row["id"])
+            )
+        db.conn.commit()
+        return False
     db.conn.execute(
         "INSERT INTO important_dates (user_id, date, label, kind, year, ts) VALUES (?, ?, ?, ?, ?, ?)",
         (user_id, date_str, label, kind, year, datetime.now().isoformat(timespec="seconds")),
     )
     db.conn.commit()
+    return True
 
 
 def get_today_important_dates(user_id: str) -> list[dict]:
-    """查询今天有哪些特殊日子（MM-DD 匹配）。"""
+    """查询今天有哪些特殊日子（MM-DD 匹配；有 year 的只匹配当年，无 year 的每年过）。"""
     today = date.today().strftime("%m-%d")
+    cur_year = date.today().year
     rows = db.conn.execute(
-        "SELECT * FROM important_dates WHERE user_id = ? AND date = ? ORDER BY kind",
-        (user_id, today),
+        "SELECT * FROM important_dates WHERE user_id = ? AND date = ? AND (year IS NULL OR year = ?) ORDER BY kind",
+        (user_id, today, cur_year),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -703,10 +753,17 @@ def get_all_important_dates(user_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def delete_important_date(date_id: int) -> None:
-    """删除一条特殊日子记录。"""
-    db.conn.execute("DELETE FROM important_dates WHERE id = ?", (date_id,))
+def delete_important_date(date_id: int, user_id: str | None = None) -> bool:
+    """删除一条特殊日子记录。若指定 user_id，则只有该用户的日子才被删（跨用户隔离）。"""
+    if user_id:
+        cur = db.conn.execute(
+            "DELETE FROM important_dates WHERE id = ? AND user_id = ?", (date_id, user_id)
+        )
+    else:
+        cur = db.conn.execute("DELETE FROM important_dates WHERE id = ?", (date_id,))
+    ok = cur.rowcount > 0
     db.conn.commit()
+    return ok
 
 
 # ---- stickers（表情包收藏）----

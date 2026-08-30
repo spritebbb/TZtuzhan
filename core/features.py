@@ -14,6 +14,10 @@ from .config import config
 _FLAGS_PATH = config.data_dir / "feature_flags.json"
 _cache: dict = {"data": {}, "ts": 0.0}
 _CACHE_TTL = 5.0
+# 写锁：set_flag 是读-改-写，两个请求并发会互相覆盖（丢失其中一个开关的变更）
+import threading
+
+_write_lock = threading.Lock()
 
 # 所有可用开关及其默认值
 FLAG_DEFAULTS = {
@@ -47,20 +51,21 @@ def set_flag(name: str, value: bool) -> None:
     """写入开关值（同时清缓存）；原子写避免读到半截 JSON。"""
     if name not in FLAG_DEFAULTS:
         return  # 只接受已知开关名
-    data = {}
-    if _FLAGS_PATH.exists():
-        try:
-            with open(_FLAGS_PATH, encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            data = {}
-    data[name] = bool(value)
-    # 原子写：写临时文件再替换，防止并发读读到损坏 JSON
-    tmp = _FLAGS_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(_FLAGS_PATH)
-    _cache["data"] = data
-    _cache["ts"] = time.time()
+    with _write_lock:  # 串行化读-改-写，避免并发覆盖
+        data = {}
+        if _FLAGS_PATH.exists():
+            try:
+                with open(_FLAGS_PATH, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                data = {}
+        data[name] = bool(value)
+        # 原子写：写临时文件再替换，防止并发读读到损坏 JSON
+        tmp = _FLAGS_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(_FLAGS_PATH)
+        _cache["data"] = data
+        _cache["ts"] = time.time()
 
 
 def all_flags() -> dict[str, bool]:

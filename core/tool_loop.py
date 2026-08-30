@@ -29,7 +29,9 @@ TOOL_HINT = """你可以按需使用 ```tool``` 代码块调用工具获取实�
 # 可执行工具白名单
 _TOOLS = {"web_search", "get_weather"}
 
-_TOOL_BLOCK_RE = re.compile(r"```tool[ \t]*\n([\s\S]*?)(?:```|\Z)", re.MULTILINE)
+# 只匹配闭合的 ```tool 代码块；未闭合块（LLM 截断）不吞尾部文本，标记单独清理
+_TOOL_BLOCK_RE = re.compile(r"```tool[ \t]*(?:\n| )([\s\S]*?)```", re.MULTILINE)
+_STRAY_TOOL_RE = re.compile(r"```tool[^\n]*\n?")
 
 
 def parse_tool_blocks(text: str) -> tuple[str, list[dict]]:
@@ -72,12 +74,16 @@ def parse_tool_blocks(text: str) -> tuple[str, list[dict]]:
                 args = {}
             calls.append({"tool": obj["tool"], "args": args})
     clean_text = _TOOL_BLOCK_RE.sub("", text).strip()
+    # 清理残留的未闭合 ```tool 标记（LLM 截断时可能只有开标记）
+    clean_text = _STRAY_TOOL_RE.sub("", clean_text).strip()
     clean_text = re.sub(r"\n{3,}", "\n\n", clean_text)
     return clean_text, calls
 
 
 async def execute_tool(call: dict) -> str:
     """执行单个工具调用，返回结果文本（失败返回友好错误）。"""
+    import asyncio
+
     tool = call.get("tool", "")
     args = call.get("args", {})
     try:
@@ -87,7 +93,8 @@ async def execute_tool(call: dict) -> str:
                 return "（搜索缺少关键词）"
             from .search import web_search
 
-            hits = web_search(query)
+            # web_search 是同步 urllib 阻塞 → 放线程池，避免卡事件循环
+            hits = await asyncio.to_thread(web_search, query)
             if not hits:
                 return "（没有搜到相关内容）"
             lines = []
@@ -99,7 +106,7 @@ async def execute_tool(call: dict) -> str:
             from .config import config
             from .mood import today_weather
 
-            weather, base = today_weather(config.mood_city)
+            weather, base = await asyncio.to_thread(today_weather, config.mood_city)
             return f"今日天气：{weather}（心情基线 {base}）"
     except Exception as e:
         logger.exception("[工具循环] 工具 {} 执行失败", tool)
@@ -174,7 +181,7 @@ async def run_tool_loop(
 
     # 循环用尽：最后一次尝试拿到完整回复（带最终指令）
     if final_instruction:
-        work.append({"role": "system", "content": final_instruction})
+        work.extend(list(final_instruction))
     raw = await call_llm(work)
     clean, _ = parse_tool_blocks(raw)
     return clean or raw

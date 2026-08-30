@@ -78,7 +78,7 @@ def _tfidf_score(query_terms: list[str], docs: list[tuple[int, str]]) -> list[tu
     idf = {term: math.log((1 + n_docs) / (1 + df[term])) + 1 for term in df}
 
     q_tf = Counter(query_terms)
-    q_vec = {t: (q_tf[t] * idf.get(t, math.log(1 + n_docs) + 1)) for t in q_tf}
+    q_vec = {t: (q_tf[t] * idf.get(t, 1)) for t in q_tf}
     q_norm = math.sqrt(sum(v * v for v in q_vec.values())) or 1
 
     scored: list[tuple[float, int]] = []
@@ -102,8 +102,8 @@ def _parse_triples(text: str) -> list[list[str]]:
     try:
         result = json.loads(cleaned)
     except Exception:
-        # 尝试从文本中提取 JSON 数组
-        m = re.search(r"\[.*?\]", cleaned, re.DOTALL)
+        # 尝试从文本中提取 JSON 数组：用贪婪匹配到最后一个 ]，避免非贪婪在第一个 ] 截断
+        m = re.search(r"\[.*\]", cleaned, re.DOTALL)
         if m:
             try:
                 result = json.loads(m.group())

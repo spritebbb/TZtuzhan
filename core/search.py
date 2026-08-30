@@ -23,6 +23,11 @@ def web_search(query: str, max_results: int = 5) -> list[dict]:
     global web_search_last_error
     web_search_last_error = ""
 
+    query = query.strip()
+    if not query:
+        web_search_last_error = "搜索词为空"
+        return []
+
     if not config.search_enabled:
         web_search_last_error = "搜索已关闭（SEARCH_ENABLED=0）"
         return []

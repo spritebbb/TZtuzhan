@@ -8,13 +8,35 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(PROJECT_ROOT / ".env")
 
 
+def _env_float(name: str, default: float) -> float:
+    """读环境变量为 float；缺失/非数字/空串一律用默认值（保证启动不崩）。"""
+    raw = os.getenv(name, "")
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    """读环境变量为 int；缺失/非数字/空串一律用默认值。"""
+    raw = os.getenv(name, "")
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
 class Config:
     def __init__(self) -> None:
         self.llm_base_url: str = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
         self.llm_api_key: str = os.getenv("LLM_API_KEY", "")
         self.llm_model: str = os.getenv("LLM_MODEL", "deepseek-chat")
-        self.llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.8"))
-        self.llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "500"))
+        self.llm_temperature: float = _env_float("LLM_TEMPERATURE", 0.8)
+        self.llm_max_tokens: int = _env_int("LLM_MAX_TOKENS", 500)
 
         persona = os.getenv("PERSONA_FILE", "persona-菟菚.md")
         p = Path(persona)
@@ -31,21 +53,21 @@ class Config:
         self.vision_model: str = os.getenv("VISION_MODEL", "").strip()
 
         # 网友式多条消息之间的发送间隔（秒）
-        self.send_interval: float = float(os.getenv("SEND_INTERVAL", "3.0"))
+        self.send_interval: float = _env_float("SEND_INTERVAL", 3.0)
         # 收到消息后到发第一条回复的"酝酿"延迟（秒）：
         # 模拟真人看到消息、想一下、开始打字的节奏，避免秒回显得像机器人
-        self.think_delay: float = float(os.getenv("THINK_DELAY", "2.0"))
+        self.think_delay: float = _env_float("THINK_DELAY", 2.0)
         # 消息去抖窗口（秒）：用户连发消息时，此时间内到达的都合并成一条整体处理。
         # 菟菚会等用户把话说完整（观察对方会不会继续打第二句/第三句），再精简成一句回应。
-        self.debounce_seconds: float = float(os.getenv("DEBOUNCE_SECONDS", "4.0"))
+        self.debounce_seconds: float = _env_float("DEBOUNCE_SECONDS", 4.0)
         # 回复延迟的随机抖动比例（0~1）：真人的反应时间不是固定的，加随机量避免规律性，
         # 既是真人感，也能降低被风控识别为"固定节奏机器人"的概率。
-        self.delay_jitter: float = float(os.getenv("DELAY_JITTER", "0.4"))
+        self.delay_jitter: float = _env_float("DELAY_JITTER", 0.4)
 
         # 主动发消息（久别后菟菚主动找你）
-        self.proactive_check_minutes: float = float(os.getenv("PROACTIVE_CHECK_MINUTES", "15"))
-        self.proactive_idle_hours: float = float(os.getenv("PROACTIVE_IDLE_HOURS", "4"))
-        self.proactive_cooldown_hours: float = float(os.getenv("PROACTIVE_COOLDOWN_HOURS", "8"))
+        self.proactive_check_minutes: float = _env_float("PROACTIVE_CHECK_MINUTES", 15)
+        self.proactive_idle_hours: float = _env_float("PROACTIVE_IDLE_HOURS", 4)
+        self.proactive_cooldown_hours: float = _env_float("PROACTIVE_COOLDOWN_HOURS", 8)
         # 允许被主动发消息的 QQ 号（逗号分隔多个；留空则对最后说话的人发）
         raw = os.getenv("PROACTIVE_USER_ID", "").strip()
         self.proactive_user_ids: list[str] = [x.strip() for x in raw.split(",") if x.strip()]

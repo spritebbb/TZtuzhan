@@ -80,12 +80,13 @@ async def notify_offline() -> None:
     if _alert_recently():
         logger.info("[掉线检测] 刚提醒过，本次跳过（防闪断刷屏）")
         return
-    _mark_alerted()
 
     _notify_local("菟菚掉线了", "NapCat/QQ 连接断开，请查看机器人是否被风控或需重新登录")
 
     # 尝试直接给管理员 QQ 发提醒（若 NapCat 尚能发消息）
     await _send_qq_alert()
+    # 标记已提醒要放在实际发送之后：若发送失败（QQ 暂不可用），下次断线还能重试提醒
+    _mark_alerted()
 
 
 async def notify_reconnect() -> None:

@@ -450,6 +450,18 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
         memory_lines.append(
             "（更早的对话摘要，作为长期背景，自然融入，不用复述）\n" + compact_summary
         )
+    else:
+        # 跨会话滚动继承：本轮没触发压缩，但上次会话持久化过 6 分区摘要 → 带进来
+        try:
+            from .memory import load_compact_summary
+
+            prev_summary = load_compact_summary(user_id)
+            if prev_summary:
+                memory_lines.append(
+                    "（你记得的关于你们过去的事，作为长期背景，自然融入，不用复述）\n" + prev_summary
+                )
+        except Exception:
+            pass
     if remembered:
         memory_lines.append(
             "（你记得的这些过去的事）\n" + "\n".join(f"- {t}" for t in remembered)

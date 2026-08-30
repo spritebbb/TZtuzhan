@@ -23,6 +23,19 @@ COMPACT_TOTAL_TRIGGER = 60      # 超过多少条触发压缩
 COMPACT_KEEP_RECENT = 14        # 保留最近多少条完整消息
 COMPACT_OLDER_LIMIT = 200       # 参与摘要的旧消息上限（控制摘要 prompt 大小）
 
+# 6 分区压缩：摘要按结构化分区输出，跨会话滚动继承时信息不丢失
+COMPACT_SECTIONS = [
+    "关键事实",     # 对方透露的重要事实（工作/生活状态、习惯）
+    "用户偏好",     # 喜好、厌恶、常用表达
+    "重要决定",     # 两人共同做的决定、约定
+    "待办事项",     # 还没做完的事、承诺要做的事
+    "背景信息",     # 环境/事件背景、关系进展
+    "最近状态",     # 对方最近的情绪/近况
+]
+
+# 跨会话摘要持久化用的 kv_store key
+_COMPACT_KV_KEY = "compact_summary"
+
 # 疑似回忆触发词：命中才做 LLM 查询扩展（省一次 LLM 调用）
 _RECALL_HINTS = (
     "上次", "之前", "以前", "还记得", "记得吗", "那天", "昨天", "刚才",
@@ -144,10 +157,42 @@ def message_count(user_id: str) -> int:
     return row["c"] or 0
 
 
-async def compact_context(user_id: str, *, mock: bool = False) -> tuple[str, list[dict]] | None:
-    """长会话压缩：总消息很多时，把旧消息摘要成一段记忆，返回 (摘要, 最近完整消息)。
+def save_compact_summary(user_id: str, summary: str) -> None:
+    """持久化 6 分区摘要到 kv_store（跨会话滚动继承的基础）。"""
+    try:
+        from .userdb import kv_set
 
-    返回 None 表示会话还不够长、无需压缩（保持原有 30 条上下文）。
+        kv_set(user_id, _COMPACT_KV_KEY, summary)
+    except Exception:
+        logger.warning("[记忆] 摘要持久化失败（不影响本次压缩）")
+
+
+def load_compact_summary(user_id: str) -> str | None:
+    """读取上次会话持久化的 6 分区摘要（跨会话滚动继承）。"""
+    try:
+        from .userdb import kv_get
+
+        val = kv_get(user_id, _COMPACT_KV_KEY)
+        return val or None
+    except Exception:
+        return None
+
+
+def _format_section_summary(data: dict) -> str:
+    """把 LLM 返回的 6 分区 JSON 整理成注入文本；缺的分区跳过。"""
+    lines = []
+    for sec in COMPACT_SECTIONS:
+        val = (data.get(sec) or "").strip()
+        if val:
+            lines.append(f"【{sec}】{val}")
+    return "\n".join(lines)
+
+
+async def compact_context(user_id: str, *, mock: bool = False) -> tuple[str, list[dict]] | None:
+    """长会话压缩：总消息很多时，把旧消息摘要成 6 分区结构化记忆。
+
+    返回 (摘要, 最近完整消息)；返回 None 表示会话还不够长、无需压缩。
+    成功后把摘要持久化到 kv_store（跨会话滚动继承）。
     失败时也返回 None（调用方自然退化为原逻辑，不阻塞对话）。
     """
     try:
@@ -168,31 +213,70 @@ async def compact_context(user_id: str, *, mock: bool = False) -> tuple[str, lis
         if not transcript.strip():
             return None
         if mock:
-            summary = f"旧聊天的摘要：共 {len(old_rows)} 条，主题略"
+            data = {
+                "关键事实": f"共 {len(old_rows)} 条旧对话被压缩",
+                "用户偏好": "（示例）",
+                "重要决定": "",
+                "待办事项": "",
+                "背景信息": "",
+                "最近状态": "",
+            }
+            summary = _format_section_summary(data)
         else:
+            prev = load_compact_summary(user_id)
+            prev_block = (
+                f"\n\n（更早一次会话继承下来的摘要，请把仍有效的内容合并进新摘要）\n{prev}"
+                if prev
+                else ""
+            )
             summary = await chat(
                 [
                     {
                         "role": "system",
                         "content": (
                             "你是记忆整理助手。下面是一段 AI 女友和一个朋友的旧聊天记录（按时间顺序）。"
-                            "请压缩成一段 3-6 句的『记忆摘要』，只保留：①对方透露的关于自己的重要信息"
-                            "（喜好、习惯、经历、约定、家人朋友、情绪状态）②两人的关系进展与默契"
-                            "③对方说过的重要的事（说过要做什么/答应过什么）。丢掉闲聊废话。"
-                            "用第三人称、客观、紧凑，不要复述对话，不要加评价。只输出摘要本身。"
+                            "请压缩成结构化摘要，只输出一个 JSON 对象，字段必须为以下 6 个（没有内容的字段给空字符串，"
+                            "不要省略字段）：\n"
+                            + "、".join(f"{s}" for s in COMPACT_SECTIONS)
+                            + "\n\n要求：只保留有价值的信息（对方透露的喜好/习惯/经历/约定/家人朋友/情绪状态、"
+                            "两人的关系进展与默契、对方说过要做或答应过的事）；丢掉闲聊废话、重复信息、比喻情绪。"
+                            "每个字段用 1-2 句客观、紧凑的中文，第三人称。只输出 JSON，不要其他内容。"
                         ),
                     },
-                    {"role": "user", "content": transcript},
+                    {"role": "user", "content": transcript + prev_block},
                 ],
                 temperature=0.3,
-                max_tokens=300,
+                max_tokens=400,
             )
-        summary = _strip_parens(summary).strip()
+            data = _parse_compact_json(summary)
+            summary = _format_section_summary(data) if data else _strip_parens(summary).strip()
+        if summary:
+            save_compact_summary(user_id, summary)
         keep = [{"role": r["role"], "content": r["content"]} for r in rows[-recent_count:]]
         return summary, keep
     except Exception:
         logger.exception("[记忆] 长会话压缩失败，退化为原上下文")
         return None
+
+
+def _parse_compact_json(text: str) -> dict | None:
+    """解析 6 分区摘要 JSON（容忍 ```json 围栏 / 截断）。"""
+    import json as _json
+
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    try:
+        obj = _json.loads(cleaned)
+    except Exception:
+        # 容错：截断时补全最外层大括号（LLM 偶尔输出不完整 JSON）
+        try:
+            obj = _json.loads(cleaned + "}")
+        except Exception:
+            return None
+    if isinstance(obj, dict):
+        return obj
+    return None
 
 
 async def recall(user_id: str, query: str, *, mock: bool = False) -> list[str]:

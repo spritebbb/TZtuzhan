@@ -336,6 +336,18 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
         search_hits = web_search(text)
 
     # 4) 组装 prompt
+    # 4.0) 意图路由：判断这条消息是闲聊还是需要工具/回忆/情感注入。
+    # 闲聊时跳过最大的堆砌源（热梗 + 对对方的了解），只保留 persona + 短上下文，
+    # 让回复更自然轻快；需要工具/回忆/情感时仍全量注入（安全优先）。
+    intent = None
+    try:
+        from .intent import classify as _classify_intent
+
+        intent = _classify_intent(text)
+    except Exception:
+        logger.exception("[pipeline] 意图路由失败，按全量注入")
+    is_chitchat = bool(intent and intent.get("chitchat"))
+
     # 4.0) 确保今日日程已由 LLM 生成（LLM 优先，规则兜底；同一天缓存）
     try:
         from .config import config as _config
@@ -380,30 +392,32 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
         logger.exception("[pipeline] 话题延续注入失败")
 
     # 4.0.5) 网络热梗：让菟菚熟知近期热梗，能在对话里自然使用
-    try:
-        from .memes import get_current_memes, has_memes, schedule_refresh
+    # 闲聊短句时跳过，避免堆砌（意图路由判定）
+    if not is_chitchat:
+        try:
+            from .memes import get_current_memes, has_memes, schedule_refresh
 
-        schedule_refresh()  # 缓存过期则后台刷新（同 key 去重）
-        current_memes = get_current_memes()
-    except Exception:
-        logger.exception("[pipeline] 热梗读取失败")
-        current_memes = []
-    if current_memes:
-        lines = "\n".join(
-            f"- {m['term']}：{m['meaning']}（例：{m['example']}）" for m in current_memes
-        )
-        messages.append(
-            {
-                "role": "system",
-                "content": (
-                    "你最近了解的这些网络热梗（供你在合适的时机自然使用）：\n"
-                    + lines
-                    + "\n要真正理解它们的含义和语境再用，别生硬堆砌；"
-                    "只在对方的话或话题让你觉得合适时，自然地用上一两个，"
-                    "营造『你也是网上冲浪的人』的同频感；用得不顺就别用，别为玩梗而玩梗。"
-                ),
-            }
-        )
+            schedule_refresh()  # 缓存过期则后台刷新（同 key 去重）
+            current_memes = get_current_memes()
+        except Exception:
+            logger.exception("[pipeline] 热梗读取失败")
+            current_memes = []
+        if current_memes:
+            lines = "\n".join(
+                f"- {m['term']}：{m['meaning']}（例：{m['example']}）" for m in current_memes
+            )
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "你最近了解的这些网络热梗（供你在合适的时机自然使用）：\n"
+                        + lines
+                        + "\n要真正理解它们的含义和语境再用，别生硬堆砌；"
+                        "只在对方的话或话题让你觉得合适时，自然地用上一两个，"
+                        "营造『你也是网上冲浪的人』的同频感；用得不顺就别用，别为玩梗而玩梗。"
+                    ),
+                }
+            )
 
     # 4.0) 日常对话里的特殊日子识别：用户这句若在告知/约定某个日子，自动记住
     try:
@@ -484,55 +498,57 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
         )
 
     # 4.2) 对对方的了解：画像 + 口头禅/黑话 + 场景风格 + 说话风格，合成一条注入。
-    # 各功能仍按开关独立收集（关掉的不注入），但合成一条 system 消息：
-    # 避免一堆并列指令压着模型（堆砌），而是像"你心里对这个人越摸越清"一样自然。
-    understanding_parts: list[str] = []
-    try:
-        from .features import flag
-        from .profile import profile_prompt_text
+    # 闲聊时跳过，避免堆砌额外信息（意图路由判定）。
+    if not is_chitchat:
+        # 各功能仍按开关独立收集（关掉的不注入），但合成一条 system 消息：
+        # 避免一堆并列指令压着模型（堆砌），而是像"你心里对这个人越摸越清"一样自然。
+        understanding_parts: list[str] = []
+        try:
+            from .features import flag
+            from .profile import profile_prompt_text
 
-        if flag("profile_enabled"):
-            profile = profile_prompt_text(user_id)
-            if profile:
-                understanding_parts.append(f"【对方的画像】\n{profile}")
-    except Exception:
-        logger.exception("[pipeline] 用户画像注入失败")
-    try:
-        from .features import flag
-        from .terms import terms_prompt_text
+            if flag("profile_enabled"):
+                profile = profile_prompt_text(user_id)
+                if profile:
+                    understanding_parts.append(f"【对方的画像】\n{profile}")
+        except Exception:
+            logger.exception("[pipeline] 用户画像注入失败")
+        try:
+            from .features import flag
+            from .terms import terms_prompt_text
 
-        if flag("terms_enabled"):
-            terms = terms_prompt_text(user_id)
-            if terms:
-                understanding_parts.append(f"【对方爱用的词】\n{terms}")
-    except Exception:
-        logger.exception("[pipeline] 口头禅注入失败")
-    try:
-        from .features import flag
-        from .style import style_map_prompt_text
+            if flag("terms_enabled"):
+                terms = terms_prompt_text(user_id)
+                if terms:
+                    understanding_parts.append(f"【对方爱用的词】\n{terms}")
+        except Exception:
+            logger.exception("[pipeline] 口头禅注入失败")
+        try:
+            from .features import flag
+            from .style import style_map_prompt_text
 
-        if flag("style_enabled"):
-            style_map = style_map_prompt_text(user_id)
-            if style_map:
-                understanding_parts.append(f"【对方不同场景的表达方式】\n{style_map}")
-    except Exception:
-        logger.exception("[pipeline] 场景风格注入失败")
-    style = db.get_style(user_id)
-    if style:
-        understanding_parts.append(f"【你逐渐观察到的对方说话风格】\n{style}")
-    if understanding_parts:
-        messages.append(
-            {
-                "role": "system",
-                "content": (
-                    "这是你渐渐对这个人摸清的样子（是你心里知道的，不是要你背出来的列表）：\n"
-                    + "\n\n".join(understanding_parts)
-                    + "\n相处久了自然记得这些：合适的时候随口体现一两点（他提到吃的你记得他爱吃什么、"
-                    "他低落时你记得他讨厌什么、他开玩笑时你用他习惯的节奏），"
-                    "千万别一口气全倒出来、别『我了解到你…』式汇报。宁可用不上，也别堆砌。"
-                ),
-            }
-        )
+            if flag("style_enabled"):
+                style_map = style_map_prompt_text(user_id)
+                if style_map:
+                    understanding_parts.append(f"【对方不同场景的表达方式】\n{style_map}")
+        except Exception:
+            logger.exception("[pipeline] 场景风格注入失败")
+        style = db.get_style(user_id)
+        if style:
+            understanding_parts.append(f"【你逐渐观察到的对方说话风格】\n{style}")
+        if understanding_parts:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "这是你渐渐对这个人摸清的样子（是你心里知道的，不是要你背出来的列表）：\n"
+                        + "\n\n".join(understanding_parts)
+                        + "\n相处久了自然记得这些：合适的时候随口体现一两点（他提到吃的你记得他爱吃什么、"
+                        "他低落时你记得他讨厌什么、他开玩笑时你用他习惯的节奏），"
+                        "千万别一口气全倒出来、别『我了解到你…』式汇报。宁可用不上，也别堆砌。"
+                    ),
+                }
+            )
     if search_hits:
         snippets = "\n".join(f"- {h['title']}：{h['snippet']}" for h in search_hits[:5])
         messages.append(

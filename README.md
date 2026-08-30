@@ -80,12 +80,79 @@ TZtuzhan/
 │   ├── fun.py              # 趣味彩蛋
 │   └── log.py              # loguru 日志
 ├── webui.py                # 🖥️ Web 管理面板（独立进程，:8800）
+├── install.bat             # 📦 一键安装（检测 Python → venv → 装依赖 → 生成 NapCat 配置）
+├── start-all.bat           # 🚀 一键启动（版本检测 → NapCat + bot + WebUI 三窗口）
+├── update.bat              # 🔄 自动更新（从 GitHub 拉取最新代码 + 更新依赖）
+├── check-update.ps1        # 🔍 版本检测脚本（start-all.bat / update.bat 内部调用）
+├── stop-bot.ps1            # 🛑 停止 bot + WebUI（保留 NapCat）
+├── check-bot.ps1           # 🩺 健康自检（进程 / WS 连接 / 日志）
 └── plugins/private_chat/   # QQ 私聊主插件
 ```
 
 ---
 
 ## 🚀 部署指南（详细）
+
+> 📦 **最快方式：直接用「一键部署包」**（Windows），免手动装依赖、免手动部署 NapCat，解压即用。
+> 下面先讲一键部署包，再讲手动部署（进阶/非 Windows 用户）。
+
+### ⚡ 快速上手：一键部署包（推荐 · Windows）
+
+一键部署包 = **完整源码 + NapCat 协议本体 + 安装/启动/更新脚本**，解压到任意目录就能跑，全程双击 `.bat` 完成，无需敲命令。
+
+**包内自带：**
+- ✅ 完整项目源码（bot / webui / core / plugins）
+- ✅ **NapCat 本体**（已内置，无需单独下载；不含任何登录态/账号数据，隐私安全）
+- ✅ `install.bat` 一键安装向导
+- ✅ `start-all.bat` 一键启动（**启动前自动检测 GitHub 新版本**）
+- ✅ `update.bat` 一键更新（免重新部署）
+
+**使用方法（约 5 分钟）：**
+
+1. **下载**：GitHub Releases 下载 `TZtuzhan-deploy-*.zip`（约 90MB）。
+2. **解压**：解压到任意目录（路径建议不含中文/空格，如 `D:\TZtuzhan`）。
+3. **安装**：双击 `install.bat`，自动完成：
+   - 检测 Python 3.10+（没有会提示先装 Python，见下方注意事项）
+   - 创建 `.venv` 虚拟环境
+   - 安装依赖（可选官方 PyPI / 清华镜像）
+   - 从模板生成 `.env`，并根据 `.env` 里的 `BOT_QQ` **自动生成 NapCat OneBot11 正向 WS 配置（端口 3001）**
+4. **填配置**：用记事本打开 `.env`，至少填：
+   ```ini
+   LLM_API_KEY=sk-你的deepseek-key      # 对话必备
+   BOT_QQ=你的bot小号QQ                 # 可选，NapCat 快速登录用
+   ```
+5. **准备 QQ**：电脑上安装 QQ（QQNT 9.x），并登录你的 **bot 小号**（首次会被要求扫码）。
+6. **启动**：双击 `start-all.bat`，依次拉起 **NapCat → Bot → WebUI** 三个窗口：
+   ```
+   [更新检查] 正在检测版本...
+   [已是最新版本] / [发现新版本！是否更新？Y/N]
+   [2/4] 启动 NapCat
+   [3/4] 启动 Bot
+   [4/4] 启动 WebUI
+   ```
+7. **验证**：用另一个 QQ 私聊 bot 号，发「你好」→ 得到慵懒回应即可。管理面板 http://127.0.0.1:8800。
+
+**更新（免重新部署）：**
+- 方式一：双击 `update.bat`，自动 `git pull` 最新代码 + 更新依赖；
+- 方式二：下次双击 `start-all.bat` 时，**启动前自动检测版本**，有新版本会询问「是否更新到最新版本？」，选 Y 自动更新后启动。
+
+> ⚠️ **注意事项**
+> - 首次运行 `install.bat` 需要联网（下载 Python 依赖）；如网络慢选「清华镜像」。
+> - 需要系统已安装 Git（`update.bat` / 启动时版本检测会用到；未安装时脚本会提示）。
+> - `.env` / `data/` / `Napcat/` 均不会在更新时被覆盖，你的配置和聊天数据安全保留。
+> - 旧版本升级到部署包：直接解压新部署包覆盖旧目录即可（保留 `.env` / `data`）。
+
+**脚本速查：**
+
+| 脚本 | 用途 | 双击后 |
+|------|------|--------|
+| `install.bat` | 📦 首次安装 | 检测 Python → 建 venv → 装依赖 → 引导填 .env → 生成 NapCat 配置 |
+| `start-all.bat` | 🚀 每日启动 | 版本检测 → 问是否更新 → NapCat + Bot + WebUI 三窗口 |
+| `update.bat` | 🔄 手动更新 | 从 GitHub 拉取最新代码 + 更新依赖 |
+| `stop-bot.ps1` | 🛑 停止 bot | 停止 bot.py + webui.py（保留 NapCat） |
+| `check-bot.ps1` | 🩺 健康检查 | 检查进程 / WS 连接 / 日志有无异常 |
+
+---
 
 ### 🧭 架构总览
 
@@ -115,6 +182,19 @@ TZtuzhan/
 > 一句话：**NapCat 管"收发 QQ 消息"，bot.py 管"怎么回话"**，两者通过 OneBot WS 协议连接。API key 全部在 `.env` 里配，bot 启动时读取。
 
 ### 1️⃣ 系统要求
+
+**一键部署包方式（Windows）额外需要：**
+
+| 项目 | 要求 |
+|---|---|
+| 系统 | Windows 10 / 11（64 位） |
+| Python | **3.10+**（`install.bat` 会自动检测；没有的话先去 python.org 装，勾选 "Add to PATH"） |
+| Git | 可选（用于 `update.bat` 自动更新与启动时版本检测；不装则只能手动更新） |
+| QQ | 电脑上装 QQNT（QQ 9.x 新版客户端），并登录一个**小号**（会被风控，别用主号） |
+| 网络 | 首次安装需联网下载依赖；运行时需能访问 `api.deepseek.com` / `api.siliconflow.cn` 等 API |
+| 磁盘 | ≥ 500MB（venv + 依赖 + NapCat） |
+
+**手动部署方式（非 Windows / 进阶）：**
 
 | 项目 | 要求 |
 |---|---|
@@ -180,11 +260,11 @@ NapCat 是 QQNT 的协议实现，负责把 bot 接到 QQ。详细图文见 [`na
 3. 确认 `.env` 里 `ONEBOT_WS_URLS=["ws://127.0.0.1:3001"]` 与 NapCat 端口一致
 4. 用 bot 的 QQ 号登录 NapCat（首次扫码，之后自动登录）
 
-Windows 一键启动脚本：
+Windows 一键启动脚本（自动带版本检测 + 拉起 WebUI）：
 
 ```powershell
 cd D:\DSH\TZtuzhan
-.\start-all.bat        # 同时拉起 NapCat + bot（防重复实例，双窗口）
+.\start-all.bat        # 启动前检测 GitHub 更新 → 拉起 NapCat + bot + WebUI（三窗口）
 ```
 
 ### 5️⃣ 启动 bot 并验证
@@ -516,12 +596,18 @@ DRIVER=~aiohttp                           # 用 aiohttp driver 支持 WS 客户�
 ## 📦 更新日志
 
 <details open>
-<summary><b>v1.3.1（2026-08-30）— 配置 API · 锁修复 · WebUI 一键整合</b></summary>
+<summary><b>v1.3.1（2026-08-30）— 配置 API · 锁修复 · 一键部署包 · 自动更新</b></summary>
 
 **新功能**
 - 🔑 **Web 面板配置 API**：新增 `/config` 页面，在线查看/编辑 `.env`（LLM/识图/生图/搜索/心情等 24 项）；
   密钥掩码显示（`sk-****abcd`）、白名单过滤防注入、空值保留原配置、保存后重启生效
-- 🚀 **一键启动整合**：`start-all.bat` 自动拉起 Web 管理面板（NapCat + bot + WebUI 三个窗口）；
+- 📦 **一键部署包**：`install.bat` 一键安装（检测 Python → venv → 依赖 → 自动生成 NapCat 配置）；
+  `start-all.bat` 启动前自动检测 GitHub 版本，有新版本询问是否更新
+- 🔄 **自动更新**：`update.bat` 从 GitHub 拉取最新代码 + 更新依赖，免重新部署；
+  `start-all.bat` 启动时版本检测，发现新版本可选静默更新后启动
+- 🚀 **可移植路径**：`start-all.bat` / `stop-bot.ps1` 改为相对路径（`%~dp0` / `$PSScriptRoot`），
+  部署包可解压到任意目录运行
+- ✅ **启动整合**：`start-all.bat` 自动拉起 Web 管理面板（NapCat + bot + WebUI 三窗口）；
   `stop-bot.ps1` 同步停止 bot 与 WebUI
 
 **修复**
@@ -588,6 +674,24 @@ DRIVER=~aiohttp                           # 用 aiohttp driver 支持 WS 客户�
 ---
 
 ## ❓ 常见问题
+
+<details>
+<summary><b>一键部署包：install.bat 报「Python not found」</b></summary>
+
+先去 https://www.python.org/downloads/ 安装 Python 3.10+，安装时务必勾选 **"Add python.exe to PATH"**，装完重开命令行再运行 `install.bat`
+</details>
+
+<details>
+<summary><b>一键部署包：update.bat / 版本检测提示「git not found」</b></summary>
+
+自动更新与启动时版本检测需要 Git：去 https://git-scm.com/download/win 安装，安装时勾选 **"Git from the command line"**。装完即可用（不影响 bot 正常启动，只是暂时跳过版本检查）
+</details>
+
+<details>
+<summary><b>一键部署包：启动后 bot 连不上 NapCat（WS 3001）</b></summary>
+
+确认 `.env` 里已填 `BOT_QQ`，并重新运行 `install.bat`（它会按 `BOT_QQ` 生成 `onebot11_<BOT_QQ>.json` 配置）；或手动在 NapCat 面板开启 OneBot11 正向 WS 监听 `0.0.0.0:3001`
+</details>
 
 <details>
 <summary><b>Python 3.14 venv 报 ensurepip 错误</b></summary>

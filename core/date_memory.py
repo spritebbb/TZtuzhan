@@ -52,7 +52,8 @@ def _parse_dates(resp: str) -> list[dict]:
         month, day = int(mm.group(1)), int(mm.group(2))
         if not (1 <= month <= 12 and 1 <= day <= 31):
             continue
-        label = str(d.get("label", "")).strip()[:30]
+        label_val = d.get("label")
+        label = str(label_val).strip()[:30] if isinstance(label_val, str) else ""
         if not label:
             continue
         year = d.get("year")

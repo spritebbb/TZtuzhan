@@ -326,22 +326,37 @@ async def on_message(user_id: str, text: str) -> None:
         _cleanup_timestamps()
 
     # ---- 心情更新：用户消息影响菟菚心情（有趣→升，冒犯→降）----
-    from .mood import on_user_message as _mood_on_msg, mood_bonus_multiplier
+    # 注意：_mood_on_msg 内部会访问 db（主线程创建的连接），不能整函数丢进线程池
+    #（否则跨线程 sqlite 崩溃）。只把网络部分（天气获取）预热到线程池，命中日缓存后
+    # 主线程调用 _mood_on_msg 不再阻塞事件循环。
+    import asyncio as _asyncio
+    from .mood import on_user_message as _mood_on_msg, mood_bonus_multiplier, today_weather as _today_weather
     from .config import config
 
-    mood = _mood_on_msg(user_id, text, city=config.mood_city)
+    _mood_city = config.mood_city
+    try:
+        if _mood_city:
+            await _asyncio.to_thread(_today_weather, _mood_city)  # 预热天气（日缓存，通常已命中）
+    except Exception:
+        pass
+
+    mood = _mood_on_msg(user_id, text, city=_mood_city)
     # 心情 → 好感度变动倍率（心情好加分多、扣分少；心情差反之）
     mult = mood_bonus_multiplier(mood)
 
-    def _scaled(delta: int, reason: str) -> None:
-        """按心情倍率缩放好感度变动（正数×mult，负数用补偿倍率）。"""
+    def _scale_delta(delta: int) -> int:
+        """按心情倍率缩放一个变动值（不落库，供检查/落库复用）。"""
         if delta >= 0:
-            scaled = round(delta * mult)
-        else:
-            # 心情差时扣分更狠：低落(0.6) → 扣分×1.4；雀跃(1.5) → 扣分×0.5
-            scaled = round(delta * (2.0 - mult))
+            return round(delta * mult)
+        # 心情差时扣分更狠：低落(0.6) → 扣分×1.4；雀跃(1.5) → 扣分×0.5
+        return round(delta * (2.0 - mult))
+
+    def _scaled(delta: int, reason: str) -> int:
+        """按心情倍率缩放好感度变动并落库，返回实际 delta（0 表示不变动）。"""
+        scaled = _scale_delta(delta)
         if scaled != 0:
             db.update_affection(user_id, scaled, reason)
+        return scaled
 
     # ---- 基础聊天奖励：每次消息 +1，每日上限 10 次 ----
     # 让日常聊天就能涨好感度，不依赖特定关键词或后台任务
@@ -375,12 +390,14 @@ async def on_message(user_id: str, text: str) -> None:
             _scaled(DAILY_COMPANION, "当日陪伴")
             _mark_daily_bonus(user_id, "first_chat")
 
-    # ---- 即时扣分（含每日上限检查）----
+    # ---- 即时扣分（含每日上限检查；用缩放后的实际 delta 判断，避免心情差时超限）----
     if _spam_hit(user_id):
-        if _penalty_ok(user_id, SPAM_PENALTY):
+        actual = _scale_delta(SPAM_PENALTY)
+        if _penalty_ok(user_id, actual):
             _scaled(SPAM_PENALTY, "刷屏")
     if check_abuse(text):
-        if _penalty_ok(user_id, ABUSE_PENALTY):
+        actual = _scale_delta(ABUSE_PENALTY)
+        if _penalty_ok(user_id, actual):
             _scaled(ABUSE_PENALTY, "辱骂")
 
     # ---- 恋人达成（首次）→ 触发第二次称呼确认 ----

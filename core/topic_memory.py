@@ -65,9 +65,9 @@ async def extract_topic(user_id: str, *, mock: bool = False) -> str | None:
     try:
         # 游标：只从最新消息里提炼，确保概括的是最近对话
         last_base = int(_kv_get(user_id, "last_topic_msg_id") or "0")
-        # 取最近 20 条带 id 的消息（按时间升序），只保留游标之后的新消息
-        all_recent = db.recent_messages_with_ids(user_id, 20)
-        rows = [r for r in all_recent if r["id"] > last_base]
+        # 用 messages_after 取游标之后的消息（不限批次上限），避免突发连发时
+        # 最早超出窗口的消息被游标永久跳过。取 50 条覆盖大部分突发场景。
+        rows = db.messages_after(user_id, last_base, 50)
         if len(rows) < TOPIC_MIN_MESSAGES:
             return None
         max_id = rows[-1]["id"]

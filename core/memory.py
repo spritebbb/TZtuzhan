@@ -159,14 +159,19 @@ def message_count(user_id: str) -> int:
     return row["c"] or 0
 
 
-def save_compact_summary(user_id: str, summary: str) -> None:
-    """持久化 6 分区摘要到 kv_store（跨会话滚动继承的基础）。"""
+def save_compact_summary(user_id: str, summary: str) -> bool:
+    """持久化 6 分区摘要到 kv_store（跨会话滚动继承的基础）。
+
+    返回 True 表示持久化成功，False 表示失败（用于游标推进决策）。
+    """
     try:
         from .userdb import kv_set
 
         kv_set(user_id, _COMPACT_KV_KEY, summary)
+        return True
     except Exception:
         logger.warning("[记忆] 摘要持久化失败（不影响本次压缩）")
+        return False
 
 
 def load_compact_summary(user_id: str) -> str | None:
@@ -263,15 +268,18 @@ async def compact_context(user_id: str, *, mock: bool = False) -> tuple[str, lis
             data = _parse_compact_json(summary)
             summary = _format_section_summary(data) if data else _strip_parens(summary).strip()
         if summary:
-            save_compact_summary(user_id, summary)
-        # 推进游标到本次摘要覆盖的最后一条消息（下次从其后开始，滚动覆盖全部历史）
-        try:
-            from .userdb import kv_set as _kv_set
+            saved = save_compact_summary(user_id, summary)
+        else:
+            saved = False
+        # 仅当摘要非空且持久化成功才推进游标（失败保留游标，下次可重试，
+        # 避免这批历史因失败/垃圾摘要被永久跳过、跨会话记忆丢失）
+        if saved and old_rows:
+            try:
+                from .userdb import kv_set as _kv_set
 
-            if old_rows:
                 _kv_set(user_id, _COMPACT_CURSOR_KEY, str(old_rows[-1]["id"]))
-        except Exception:
-            pass
+            except Exception:
+                pass
         keep = [{"role": r["role"], "content": r["content"]} for r in rows[-recent_count:]]
         return summary, keep
     except Exception:

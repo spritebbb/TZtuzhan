@@ -14,13 +14,21 @@ from .log import logger
 
 _vision_client: AsyncOpenAI | None = None
 
+# 视觉调用超时/重试：与 llm.py 显式控制保持一致，避免端点挂起时卡住消息处理
+_VISION_TIMEOUT_SEC = 30
+
 
 def get_vision_client() -> AsyncOpenAI:
     global _vision_client
     if _vision_client is None:
         base = config.vision_base_url or config.llm_base_url
         key = config.vision_api_key or config.llm_api_key
-        _vision_client = AsyncOpenAI(base_url=base, api_key=key)
+        _vision_client = AsyncOpenAI(
+            base_url=base,
+            api_key=key,
+            timeout=_VISION_TIMEOUT_SEC,
+            max_retries=0,  # 失败直接返回，由调用方降级（不阻塞对话）
+        )
     return _vision_client
 
 

@@ -20,9 +20,11 @@ _REFRESH_HOURS = 6
 INJECT_MAX = 8
 
 # 刷新 in-flight 锁：防止 meme_refresh_loop 与对话触发的 schedule 并发抓取/写缓存
-import threading
+# 用 asyncio.Lock（refresh_memes 是 async，内部跨 await 持有锁；
+# threading.Lock 会让第二个协程在事件循环线程上阻塞，导致死锁）
+import asyncio
 
-_refresh_lock = threading.Lock()
+_refresh_lock = asyncio.Lock()
 
 _CACHE_PATH = None
 

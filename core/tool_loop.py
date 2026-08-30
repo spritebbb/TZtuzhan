@@ -155,7 +155,9 @@ async def run_tool_loop(
                 work.extend(list(final_instruction))
             final_raw = await call_llm(work)
             final_clean, _ = parse_tool_blocks(final_raw)
-            return final_clean or final_raw
+            # clean 为空说明最终输出只有 ```tool``` 代码块（或空文本），
+            # 不能回退 raw（会把原始 JSON 漏给用户）；用占位兜底。
+            return final_clean or "（我先记一下，回头跟你说）"
 
         # 执行工具（并行）
         import asyncio

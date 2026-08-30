@@ -83,8 +83,13 @@ async def extract_style_map(user_id: str, *, rows=None, done=0) -> bool:
     for item in data.get("styles") or []:
         if not isinstance(item, dict):
             continue
-        s = str(item.get("situation", "")).strip()[:40]
-        st = str(item.get("style", "")).strip()[:60]
+        situation = item.get("situation")
+        style_desc = item.get("style")
+        # 只收字符串值：LLM 偶发 dict/list 时 str() 会入库成垃圾文本污染上下文
+        if not isinstance(situation, str) or not isinstance(style_desc, str):
+            continue
+        s = situation.strip()[:40]
+        st = style_desc.strip()[:60]
         if not (s and st):
             continue
         # 同场景只保留一条（LLM 多次提炼可能用词略不同，避免重复堆积）

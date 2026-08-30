@@ -211,5 +211,7 @@ def last_error() -> str:
 
 
 async def generate(prompt: str, size: str = "1024x1024") -> str | None:
-    """异步入口（生成是 CPU/网络阻塞，直接同步执行即可；保持 async 便于调用方 await）。"""
-    return generate_sync(prompt, size)
+    """异步入口（生成是 CPU/网络阻塞，放线程池避免卡事件循环）。"""
+    import asyncio
+
+    return await asyncio.to_thread(generate_sync, prompt, size)

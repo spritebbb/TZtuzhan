@@ -8,6 +8,7 @@
 import hashlib
 import json
 import sqlite3
+import threading
 import urllib.request
 from pathlib import Path
 
@@ -19,6 +20,10 @@ EMBED_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 
 # 独立向量库连接（vec0 虚拟表需 load_extension）
 _vec_conn: sqlite3.Connection | None = None
+# 跨线程访问串行化：连接可被 asyncio.to_thread 的工作线程使用，
+# sqlite3 需 check_same_thread=False，所有 conn 操作经此锁串行。
+# 用 RLock：_vconn 首次建连接也会取锁，而调用方（index/search 等）已持锁。
+_vec_lock = threading.RLock()
 # embedding 缓存：text -> 向量（省 API 调用）
 _emb_cache: dict[str, list[float]] = {}
 _EMB_CACHE_MAX = 2000
@@ -27,21 +32,23 @@ _EMB_CACHE_MAX = 2000
 def _vconn() -> sqlite3.Connection:
     global _vec_conn
     if _vec_conn is None:
-        import sqlite_vec
+        with _vec_lock:
+            if _vec_conn is None:
+                import sqlite_vec
 
-        conn = sqlite3.connect(config.data_dir / "bot.db")
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA busy_timeout = 5000")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.enable_load_extension(True)
-        sqlite_vec.load(conn)
-        conn.enable_load_extension(False)
-        conn.execute(
-            f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(id TEXT PRIMARY KEY, text_embedding float[{VECTOR_DIM}])"
-        )
-        conn.commit()
-        _vec_conn = conn
+                conn = sqlite3.connect(config.data_dir / "bot.db", check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA busy_timeout = 5000")
+                conn.execute("PRAGMA synchronous = NORMAL")
+                conn.enable_load_extension(True)
+                sqlite_vec.load(conn)
+                conn.enable_load_extension(False)
+                conn.execute(
+                    f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(id TEXT PRIMARY KEY, text_embedding float[{VECTOR_DIM}])"
+                )
+                conn.commit()
+                _vec_conn = conn
     return _vec_conn
 
 
@@ -112,13 +119,14 @@ def index(
         if not vec:
             return False
         key = f"{user_id}:{kind}:{record_id}"
-        conn = _vconn()
-        conn.execute("DELETE FROM vec_memory WHERE id = ?", (key,))
-        conn.execute(
-            "INSERT INTO vec_memory (id, text_embedding) VALUES (?, ?)",
-            (key, _vec_str(vec)),
-        )
-        conn.commit()
+        with _vec_lock:
+            conn = _vconn()
+            conn.execute("DELETE FROM vec_memory WHERE id = ?", (key,))
+            conn.execute(
+                "INSERT INTO vec_memory (id, text_embedding) VALUES (?, ?)",
+                (key, _vec_str(vec)),
+            )
+            conn.commit()
         return True
     except Exception:
         logger.warning("[向量] 建索引失败：{}:{}:{}", user_id, kind, record_id)
@@ -140,11 +148,13 @@ def search(
         vec = embed(query)
         if not vec:
             return []
-        conn = _vconn()
-        rows = conn.execute(
-            "SELECT id, distance FROM vec_memory WHERE text_embedding MATCH ? AND k = ?",
-            (_vec_str(vec), top_k * 3),
-        ).fetchall()
+        with _vec_lock:
+            conn = _vconn()
+            # 放大 k 避免多用户下当前用户的候选被其他用户挤出
+            rows = conn.execute(
+                "SELECT id, distance FROM vec_memory WHERE text_embedding MATCH ? AND k = ?",
+                (_vec_str(vec), top_k * 20),
+            ).fetchall()
         prefix = f"{user_id}:{kind}:" if kind else f"{user_id}:"
         out = []
         for r in rows:
@@ -166,8 +176,9 @@ def search(
 def indexed_count() -> int:
     """当前向量索引总条数（用于判断是否需要回填）。"""
     try:
-        conn = _vconn()
-        return conn.execute("SELECT COUNT(*) AS c FROM vec_memory").fetchone()["c"]
+        with _vec_lock:
+            conn = _vconn()
+            return conn.execute("SELECT COUNT(*) AS c FROM vec_memory").fetchone()["c"]
     except Exception:
         return 0
 
@@ -180,43 +191,47 @@ def backfill(user_id: str = "", limit: int = 1000) -> int:
 
     注意：按表分 kind 命名空间，避免两表 id 冲突覆盖索引。
     """
-    from .userdb import db
-
+    # 在 to_thread 工作线程里执行，需独立读连接（不能碰主线程建的 db.conn）
+    read_conn = sqlite3.connect(config.data_dir / "bot.db")
+    read_conn.row_factory = sqlite3.Row
     built = 0
     try:
-        conn = _vconn()
-        for table, kind in (("long_memory", "lm"), ("facts", "facts")):
-            # 全表扫描 + 逐条 exists 判断；分批取避免一次加载过多
-            last_id = 0
-            while True:
-                rows = db.conn.execute(
-                    "SELECT id, user_id, content FROM {} WHERE id > ? ORDER BY id LIMIT ?".format(table),
-                    (last_id, limit),
-                ).fetchall()
-                if not rows:
-                    break
-                for row in rows:
-                    rid, uid, content = row["id"], row["user_id"], row["content"]
-                    last_id = rid
-                    if user_id and uid != user_id:
-                        continue
-                    key = f"{uid}:{kind}:{rid}"
-                    exists = conn.execute(
-                        "SELECT 1 FROM vec_memory WHERE id=?", (key,)
-                    ).fetchone()
-                    if exists:
-                        continue
-                    vec = embed(content)
-                    if not vec:
-                        continue
-                    conn.execute(
-                        "INSERT INTO vec_memory (id, text_embedding) VALUES (?, ?)",
-                        (key, _vec_str(vec)),
-                    )
-                    built += 1
-        conn.commit()
+        with _vec_lock:
+            conn = _vconn()
+            for table, kind in (("long_memory", "lm"), ("facts", "facts")):
+                # 全表扫描 + 逐条 exists 判断；分批取避免一次加载过多
+                last_id = 0
+                while True:
+                    rows = read_conn.execute(
+                        "SELECT id, user_id, content FROM {} WHERE id > ? ORDER BY id LIMIT ?".format(table),
+                        (last_id, limit),
+                    ).fetchall()
+                    if not rows:
+                        break
+                    for row in rows:
+                        rid, uid, content = row["id"], row["user_id"], row["content"]
+                        last_id = rid
+                        if user_id and uid != user_id:
+                            continue
+                        key = f"{uid}:{kind}:{rid}"
+                        exists = conn.execute(
+                            "SELECT 1 FROM vec_memory WHERE id=?", (key,)
+                        ).fetchone()
+                        if exists:
+                            continue
+                        vec = embed(content)
+                        if not vec:
+                            continue
+                        conn.execute(
+                            "INSERT INTO vec_memory (id, text_embedding) VALUES (?, ?)",
+                            (key, _vec_str(vec)),
+                        )
+                        built += 1
+            conn.commit()
         if built:
             logger.info("[向量] 存量回填完成，新增 {} 条索引", built)
     except Exception:
         logger.warning("[向量] 存量回填失败（下次启动重试）")
+    finally:
+        read_conn.close()
     return built

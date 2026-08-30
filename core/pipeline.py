@@ -101,24 +101,30 @@ def _extract_reply(text: str) -> str:
 
     LLM 输出可能用不同的括号/标注来分隔思考与实际发言：
       【思考】…【回复】…      〔思考〕…〔回复〕…      思考:…回复:…
-    优先找「回复」段（兼容多种写法，取最后一个避免思考段误命中）；
-    找不到则把「思考」段及其后的内容裁掉，只留最终要发的部分。
+    规则：
+    - 显式括号回复标记（【回复】/〔回复〕/[回复]）：取**最后一个**标记后的内容
+      （兼容多段【回复】输出，前面的回复块不重复保留）
+    - 裸「回复：」只认**行首**（避免命中正文里的「回复：」字样）
+    - 找不到回复段则把「思考」段裁掉，只留最终要发的部分；
+      裸「思考：」同样只认行首，正文中间的「思考：」不处理。
     """
-    # 先尝试各类「回复」标注，取最后一个匹配（正文可能跨行）
-    for pat in (
-        r"【回复】\s*(.*)",
-        r"〔回复〕\s*(.*)",
-        r"\[回复\]\s*(.*)",
-        r"回复[：:]\s*(.*)",
-    ):
-        m = re.search(pat, text, re.S)
-        if m and m.group(1).strip():
-            return m.group(1).strip()
-    # 没有「回复」标注：如果有「思考」段且其与被标注的正文之间有清晰分隔，
-    # 取思考段之后的内容；思考段往往是一整行，正文从下一行开始——
-    # 只保留思考段第一行之后的部分，避免把内心思考发给对方（思考泄漏）。
+    # ① 显式括号回复标记：取最后一个标记后的全部内容
+    for pat in (r"【回复】", r"〔回复〕", r"\[回复\]"):
+        ends = [m.end() for m in re.finditer(pat, text)]
+        if ends:
+            return text[ends[-1]:].strip()
+    # ② 裸「回复：/回复:」锚定行首：取最后一个匹配行之后的内容（正文可能跨行）
+    lines = text.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        m = re.match(r"^\s*(?:回复|reply)[：:]\s*(.*)$", lines[i], re.I)
+        if m:
+            body = m.group(1).strip()
+            rest = "\n".join(lines[i + 1:]).strip()
+            return (body + "\n" + rest).strip() if rest else body
+    # ③ 思考段：括号标记任意位置；裸「思考：」仅行首，取其后正文
     thought_pat = re.compile(
-        r"(?:【思考】|〔思考〕|思考[：:])\s*[^\n]*(?:\n(?P<body>[\s\S]*))?",
+        r"(?:【思考】|〔思考〕|^[ \t]*思考[：:])\s*[^\n]*(?:\n(?P<body>[\s\S]*))?",
+        re.M,
     )
     m = thought_pat.search(text)
     if m:
@@ -138,19 +144,27 @@ def strip_actions(text: str) -> str:
     """移除模型输出里的任何括号旁白（动作/语气/屏幕提示），只留台词。
 
     覆盖全角（）/半角()/六角〔〕；全角方头【】作为残留思考标记也一并清理。
+    裸「思考：/回复：」只认行首，正文中间的措辞不受影响。
     """
-    # 若还有思考/回复标记对，先丢弃思考段、保留回复段（应对未经 _extract_reply 的情况）
-    for reply_pat in (r"【回复】\s*", r"〔回复〕\s*", r"\[回复\]\s*", r"回复[：:]\s*"):
-        m = re.search(reply_pat, text, re.S)
-        if m:
-            # 取最后一个回复标记之后的内容作为正文
-            tail = text[m.end():]
-            text = tail
+    # ① 有显式回复标记（括号或行首「回复：」）：丢弃思考，保留最后一段回复
+    for pat in (r"【回复】", r"〔回复〕", r"\[回复\]"):
+        ends = [m.end() for m in re.finditer(pat, text)]
+        if ends:
+            text = text[ends[-1]:]
             break
-    # 剥掉一个完整思考段（若无回复标记，思考内容跟着正文也不理想，但保留正文优先）
-    text = re.sub(r"(?:【思考】|〔思考〕|思考[：:])\s*[^【】〔〕]*", "", text)
-    text = re.sub(r"〔[^〕]*〕", "", text)     # 六角旁白/思考残留
+    else:
+        lines = text.splitlines()
+        for i in range(len(lines) - 1, -1, -1):
+            m = re.match(r"^\s*(?:回复|reply)[：:]\s*(.*)$", lines[i], re.I)
+            if m:
+                body = m.group(1).strip()
+                rest = "\n".join(lines[i + 1:]).strip()
+                text = body + ("\n" + rest if rest else "")
+                break
+    # ② 剥思考段：括号标记任意位置；裸「思考：」仅行首
+    text = re.sub(r"(?m)^[ \t]*(?:【思考】|〔思考〕|思考[：:])[^\n]*\n?", "", text)
     text = re.sub(r"【[^】]*】", "", text)     # 全角方头（思考/标注残留）
+    text = re.sub(r"〔[^〕]*〕", "", text)     # 六角旁白/思考残留
     text = _PAREN_RE.sub("", text)             # 圆括号旁白
     return text.strip()
 
@@ -219,15 +233,26 @@ async def _extract_profile_and_terms(user_id: str) -> None:
 # 同用户串行锁：pipeline 会写好感度/记忆/消息表，若两条消息并发处理会竞态
 # （好感度计数错乱、消息顺序颠倒）。按 user_id 加锁，天然串行。
 _user_locks: dict[str, "asyncio.Lock"] = {}
+# 锁上次使用时间：空闲超时后清理，避免长跑积累无界内存
+_LOCK_IDLE_TIMEOUT = 3600.0
+_lock_last_used: dict[str, float] = {}
 
 
 def _user_lock(user_id: str) -> "asyncio.Lock":
     import asyncio
+    import time
 
+    now = time.monotonic()
+    # 顺带清理长期不用的锁（每次取锁时惰性清扫，避免额外定时任务）
+    if len(_user_locks) > 64:
+        for uid in [u for u, t in _lock_last_used.items() if now - t > _LOCK_IDLE_TIMEOUT]:
+            _user_locks.pop(uid, None)
+            _lock_last_used.pop(uid, None)
     lock = _user_locks.get(user_id)
     if lock is None:
         lock = asyncio.Lock()
         _user_locks[user_id] = lock
+    _lock_last_used[user_id] = now
     return lock
 
 
@@ -257,6 +282,10 @@ async def _process_locked(user_id: str, text: str, *, mock: bool = False, merged
     await affection.on_message(user_id, text)
     # 好感度可能已变：刷新快照，后续 system prompt / 阶段判定用最新值
     user = db.get_user(user_id)
+
+    # 1.0) 用户消息先存档：即使后续 LLM 调用失败，对话历史也不丢、
+    # 失败重发时不至于重复计好感（assistant 消息在生成成功后补存）。
+    db.add_message(user_id, "user", text)
 
     # 1.1) v2 正向互动即时奖励（每日各上限 1 次；不阻塞、失败静默）
     try:
@@ -477,9 +506,19 @@ async def _process_locked(user_id: str, text: str, *, mock: bool = False, merged
             logger.exception("[pipeline] 热梗读取失败")
             current_memes = []
         if current_memes:
+            # 外部缓存数据可能缺键（LLM 生成），逐条 .get() 容错，避免 KeyError 击穿
+            safe_memes = [
+                m for m in current_memes
+                if isinstance(m, dict) and m.get("term") and m.get("meaning")
+            ]
             lines = "\n".join(
-                f"- {m['term']}：{m['meaning']}（例：{m['example']}）" for m in current_memes
+                f"- {m.get('term')}：{m.get('meaning')}"
+                + (f"（例：{m.get('example')}）" if m.get("example") else "")
+                for m in safe_memes
             )
+            if not lines:
+                current_memes = []
+        if current_memes:
             messages.append(
                 {
                     "role": "system",
@@ -798,8 +837,7 @@ async def _process_locked(user_id: str, text: str, *, mock: bool = False, merged
     if not reply.strip():
         reply = "嗯……我想想怎么回你。"
 
-    # 6) 存档
-    db.add_message(user_id, "user", text)
+    # 6) 存档（user 消息已在 1.0 存档，这里只补 assistant 回复）
     db.add_message(user_id, "assistant", reply)
     lm1_id = db.add_long_memory(user_id, f"用户说：{text}")
     lm2_id = db.add_long_memory(user_id, f"菟菚说：{reply}")

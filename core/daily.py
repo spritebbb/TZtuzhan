@@ -60,6 +60,7 @@ async def run_daily_batch(user_id: str, day: date) -> None:
         return
     transcript = "\n".join(f"{r['role']}: {r['content']}" for r in rows[-60:])
     data = {}
+    llm_ok = False
     try:
         resp = await chat(
             [
@@ -68,6 +69,7 @@ async def run_daily_batch(user_id: str, day: date) -> None:
             ]
         )
         data = _parse_json(resp)
+        llm_ok = True
     except Exception:
         logger.exception("[每日总结] {} 的好感度判定失败", user_id)
 
@@ -87,9 +89,10 @@ async def run_daily_batch(user_id: str, day: date) -> None:
         db.set_nickname(user_id, clean_address(addr)[:12])
 
     await extract_facts(user_id, day)
-    # 全部完成 → 标记当日已处理，并推进 last_batch_date
-    _kv_set(user_id, done_key, "1")
-    db.set_batch_date(user_id, day.isoformat())
+    # 仅 LLM 判定成功才标记当日已完成；失败保留 done_key 空缺，下次可重试补判
+    if llm_ok:
+        _kv_set(user_id, done_key, "1")
+        db.set_batch_date(user_id, day.isoformat())
 
 
 async def extract_facts(user_id: str, day: date | None = None) -> None:

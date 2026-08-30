@@ -162,7 +162,17 @@ async def proactive_message(user_id: str) -> str:
             ),
         }
     )
-    # 多场景由头：节日/特殊日子/深夜安慰/天气，让主动消息有"由头"而不是凭空搭话
+    # 场景由头（节日/特殊日子/天气）——天气首次获取走网络，预热到线程池再主线程调
+    #（_scenario_hint 内部访问 db，整函数丢线程会跨线程 sqlite 崩溃）
+    import asyncio as _asyncio
+    from .mood import today_weather as _today_weather
+
+    try:
+        if config.mood_city:
+            await _asyncio.to_thread(_today_weather, config.mood_city)
+    except Exception:
+        pass
+
     scenario = _scenario_hint(user_id, config.mood_city)
     if scenario:
         messages.append(
@@ -287,8 +297,12 @@ async def send_proactive_now(bot, user_id: str) -> bool:
 
 
 def _stage_cooldown_hours(user_id: str) -> float:
-    """按关系阶段缩放冷却时间：越熟越愿意主动找你。"""
-    stage = affection.stage_of(db.get_user(user_id)["affection"])
+    """按关系阶段缩放冷却时间：越熟越愿意主动找你。
+
+    用户可能尚无记录（get_user 返回 None），用 ensure_user 兜底拿默认阶段。
+    """
+    user = db.ensure_user(user_id)
+    stage = affection.stage_of(user["affection"])
     return config.proactive_cooldown_hours * _STAGE_COOLDOWN_MULTIPLIER.get(stage, 1.0)
 
 

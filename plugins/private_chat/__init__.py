@@ -184,6 +184,7 @@ async def _debounce_flush(user_id: str) -> None:
         # 在异步 task 里不能依赖 event.bot（context 已失效），用 get_bot() 取当前 bot
         from nonebot import get_bot
 
+        bot = None
         try:
             bot = get_bot()
         except ValueError:
@@ -256,10 +257,12 @@ async def _debounce_flush(user_id: str) -> None:
         # 处理期间又有新消息 → 补一次 flush（不丢消息）
         if _pending_items.get(user_id) and user_id not in _debounce_tasks:
             _debounce_tasks[user_id] = asyncio.create_task(_debounce_flush(user_id))
-        try:
-            await _after_flush_side_effects(bot, user_id, items, incoming_images)
-        except Exception:
-            logger.exception("[去抖] 回复 {} 收尾失败", user_id)
+        # get_bot 失败时 bot 为 None，跳过收尾副动作（避免引用未绑定变量）
+        if bot is not None:
+            try:
+                await _after_flush_side_effects(bot, user_id, items, incoming_images)
+            except Exception:
+                logger.exception("[去抖] 回复 {} 收尾失败", user_id)
 
 
 async def _after_flush_side_effects(bot, user_id: str, items: list[dict], incoming_images: list[str]) -> None:
@@ -687,7 +690,8 @@ async def handle_search(event: PrivateMessageEvent):
     text = _cmd_arg(event.get_plaintext(), "搜索", "搜")
     if not text:
         await search_cmd.finish(Message("用法：/搜索 <关键词>"))
-    results = web_search(text)
+    # web_search 是同步 urllib 阻塞 → 放线程池避免卡事件循环
+    results = await asyncio.to_thread(web_search, text)
     if not results:
         await search_cmd.finish(Message(f"没查到什么……（{search_last_error() or '未知原因'}）"))
     lines = [f"{r['title']}：{r['snippet'][:80]}" for r in results[:5]]

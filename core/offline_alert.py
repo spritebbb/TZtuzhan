@@ -84,9 +84,11 @@ async def notify_offline() -> None:
     _notify_local("菟菚掉线了", "NapCat/QQ 连接断开，请查看机器人是否被风控或需重新登录")
 
     # 尝试直接给管理员 QQ 发提醒（若 NapCat 尚能发消息）
-    await _send_qq_alert()
-    # 标记已提醒要放在实际发送之后：若发送失败（QQ 暂不可用），下次断线还能重试提醒
-    _mark_alerted()
+    sent = await _send_qq_alert()
+    # 仅当至少一个渠道成功发送才标记已提醒；全部失败时不标记，
+    # 下次断线（冷却期外）还能重试提醒（与注释承诺一致）。
+    if sent:
+        _mark_alerted()
 
 
 async def notify_reconnect() -> None:
@@ -133,27 +135,33 @@ def _notify_local(title: str, body: str) -> None:
         logger.debug("[掉线检测] 本地通知不可用")
 
 
-async def _send_qq_alert() -> None:
-    """给 config.proactive_user_ids 里配置的 QQ 号发一条掉线提醒。"""
+async def _send_qq_alert() -> bool:
+    """给 config.proactive_user_ids 里配置的 QQ 号发一条掉线提醒。
+
+    返回 True 表示至少一个目标发送成功。
+    """
     targets = config.proactive_user_ids
     if not targets:
-        return
+        return False
     try:
         bot = get_bot()
     except Exception:
         logger.debug("[掉线检测] 无 bot 实例，跳过 QQ 提醒")
-        return
+        return False
     body = (
         "😿 菟菚的 QQ 好像掉线了……\n"
         "可能是被腾讯风控强制离线，或 NapCat/网络出了问题。\n"
         "方便的话帮我重新扫码登录一下，不然我就联系不上你了。"
     )
+    sent_any = False
     for uid in targets:
         try:
             await bot.send_private_msg(user_id=int(uid), message=Message(body))
             logger.info("[掉线检测] 已向 {} 发送掉线提醒", uid)
+            sent_any = True
         except Exception:
             logger.warning("[掉线检测] 向 {} 发掉线提醒失败", uid)
+    return sent_any
 
 
 def setup() -> None:

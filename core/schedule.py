@@ -118,7 +118,15 @@ def _parse_llm_schedule(resp: str) -> list[dict] | None:
     # 要求覆盖全部 6 个时段（去重后仍需完整，避免 LLM 重复输同一时段缺另一段）
     if len(set(it["period"] for it in out)) < 6:
         return None
-    return out[:6]
+    # 去重后返回：每时段保留第一条，避免 LLM 输出 7 条且唯一时段在尾部时被 [:6] 截掉
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for it in out:
+        if it["period"] in seen:
+            continue
+        seen.add(it["period"])
+        deduped.append(it)
+    return deduped[:6]
 
 
 async def _generate_via_llm(user_id: str, *, city: str = "") -> list[dict] | None:
@@ -128,7 +136,10 @@ async def _generate_via_llm(user_id: str, *, city: str = "") -> list[dict] | Non
     from .llm import chat
 
     stage = _stage_of(user_id)
-    weather = _weather_kind(city) or "未知"
+    # 天气首次获取走网络，放线程池防卡事件循环
+    import asyncio as _asyncio
+
+    weather = await _asyncio.to_thread(_weather_kind, city) or "未知"
     special = _special_kind(user_id)
     special_desc = (
         {"birthday": "今天是你的生日，日程里要自然地带上这份特别",

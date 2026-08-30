@@ -79,8 +79,13 @@ def image_bytes(data: bytes) -> str:
 
 
 def retcode_1200(exc: Exception) -> bool:
-    """判断异常是否是 NapCat 的"消息体无法解析"(retcode=1200)。"""
-    return "1200" in str(exc) or "retcode=1200" in str(exc)
+    """判断异常是否是 NapCat 的"消息体无法解析"(retcode=1200)。
+
+    只匹配明确的 retcode=1200 / code=1200 形式，避免错误文本里偶然出现的
+    "1200"（如时间戳/其他错误码）触发降级重发导致用户收到重复消息。
+    """
+    s = str(exc)
+    return "retcode=1200" in s or "code=1200" in s or "retcode : 1200" in s or "code : 1200" in s
 
 
 def plain_text(text: str) -> str:

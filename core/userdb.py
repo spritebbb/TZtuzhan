@@ -716,11 +716,13 @@ def save_important_date(user_id: str, date_str: str, label: str, kind: str = "ot
     ).fetchone()
     if row:
         # 已存在：补全缺失的 kind/year（如首次识别没年份、复盘补上了）
+        # 注意：birthday/anniversary 的 year 不补全（保持每年过），
+        # 只有 kind='other' 的一次性日子才补 year。
         if (not row["kind"] or row["kind"] == "other") and kind != "other":
             db.conn.execute(
                 "UPDATE important_dates SET kind = ? WHERE id = ?", (kind, row["id"])
             )
-        if row["year"] is None and year is not None:
+        if row["year"] is None and year is not None and kind != "birthday" and kind != "anniversary":
             db.conn.execute(
                 "UPDATE important_dates SET year = ? WHERE id = ?", (year, row["id"])
             )
@@ -735,11 +737,16 @@ def save_important_date(user_id: str, date_str: str, label: str, kind: str = "ot
 
 
 def get_today_important_dates(user_id: str) -> list[dict]:
-    """查询今天有哪些特殊日子（MM-DD 匹配；有 year 的只匹配当年，无 year 的每年过）。"""
+    """查询今天有哪些特殊日子（MM-DD 匹配）。
+
+    - birthday / anniversary：每年都过（忽略 year，带出生年份也照常触发）
+    - other（一次性纪念日）：只在 year 匹配当年（或未标年份）时触发
+    """
     today = date.today().strftime("%m-%d")
     cur_year = date.today().year
     rows = db.conn.execute(
-        "SELECT * FROM important_dates WHERE user_id = ? AND date = ? AND (year IS NULL OR year = ?) ORDER BY kind",
+        "SELECT * FROM important_dates WHERE user_id = ? AND date = ? "
+        "AND (kind IN ('birthday', 'anniversary') OR year IS NULL OR year = ?) ORDER BY kind",
         (user_id, today, cur_year),
     ).fetchall()
     return [dict(r) for r in rows]
@@ -828,7 +835,7 @@ def get_sticker_by_desc(user_id: str, keyword: str, limit: int = 30) -> list[dic
         hits = sum(1 for k in kw if k in desc)
         if hits > 0:
             scored.append((hits, dict(r)))
-    scored.sort(key=lambda x: (x[0], -x[1].get("count", 0)), reverse=True)
+    scored.sort(key=lambda x: (x[0], x[1].get("count", 0)), reverse=True)
     return [d for _, d in scored[:limit]]
 
 

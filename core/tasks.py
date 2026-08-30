@@ -32,8 +32,12 @@ def schedule(key: str, coro_factory: Callable[[], Awaitable]) -> None:
             _inflight.discard(key)
             _tasks.discard(asyncio.current_task())
 
-    task = asyncio.get_running_loop().create_task(_runner())
-    _tasks.add(task)
+    try:
+        task = asyncio.get_running_loop().create_task(_runner())
+        _tasks.add(task)
+    except RuntimeError:
+        # create_task 失败（如 loop 关闭时不创建任务），清理 inflight 防永久跳过
+        _inflight.discard(key)
 
 
 def pending(key: str) -> bool:

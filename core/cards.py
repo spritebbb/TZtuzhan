@@ -162,10 +162,16 @@ def render_affection_card(
         # 下一阶段提示（阶段名取自 STAGE_THRESHOLDS，避免硬编码「恋人」）
         from . import affection as _aff
 
-        max_stage = _aff.STAGE_THRESHOLDS[-1][1]
         tip = ""
         if next_threshold:
-            tip = f"距「{max_stage}」还需 {next_threshold - affection} 点"
+            # 显示「下一阶段」名（不是最高阶段名），并给出到下一阶段的点数
+            next_name = ""
+            for _t, _n in _aff.STAGE_THRESHOLDS:
+                if _t == next_threshold:
+                    next_name = _n
+                    break
+            next_name = next_name or _aff.STAGE_THRESHOLDS[-1][1]
+            tip = f"距「{next_name}」还需 {next_threshold - affection} 点"
         else:
             tip = "已是最高阶段，感情圆满 💞"
         d.text((36, H - 42), tip, font=_font(False, 20), fill=(255, 235, 240))
@@ -187,7 +193,7 @@ def render_mood_card(
 ) -> bytes | None:
     """渲染心情卡片。"""
     try:
-        W, H = 480, 280
+        W, H = 480, 300
         c1, c2 = _theme(_MOOD_COLORS, label)
         img, d = _card_base((W, H), c1, c2)
 

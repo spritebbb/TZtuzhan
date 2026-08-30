@@ -25,7 +25,7 @@ if %ERRORLEVEL%==0 (
     ) else (
         echo   [X] Python not found!
         echo   Please install Python 3.10+ from https://www.python.org/downloads/
-        echo   (check "Add python.exe to PATH" during install)
+        echo   and check "Add python.exe to PATH" during install
         echo.
         echo   After installing, run this script again.
         pause
@@ -70,7 +70,7 @@ echo   [OK] Dependencies installed
 REM === 4. Prepare .env ===
 echo [4/5] Preparing .env ...
 if exist ".env" (
-    echo   [OK] .env already exists (will keep it)
+    echo   [OK] .env already exists - will keep it
 ) else (
     copy /y ".env.example" ".env" >nul
     echo   [OK] Created .env from template

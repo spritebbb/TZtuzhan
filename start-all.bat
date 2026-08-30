@@ -1,5 +1,6 @@
 @echo off
 chcp 65001 >nul
+setlocal enabledelayedexpansion
 title 菟菚 QQ bot 一键启动
 echo ==========================================
 echo   菟菚 QQ bot 一键启动
@@ -26,6 +27,38 @@ REM === 1. 检查是否需要管理员权限（NapCat 注入 QQNT 需要）===
 net session >nul 2>&1
 if %ERRORLEVEL% == 0 (
     echo [OK] 已具备管理员权限.
+
+    REM === 1.5 版本检测（GitHub 更新检查）===
+    echo.
+    echo [更新检查] 正在检测版本...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%check-update.ps1"
+    set "UPSTATUS=!ERRORLEVEL!"
+    if "!UPSTATUS!"=="1" (
+        echo.
+        echo   [发现新版本！]
+        choice /c YN /n /m "  是否更新到最新版本？[Y=更新 N=跳过直接启动] "
+        if errorlevel 2 (
+            echo   [跳过更新，直接启动]
+        ) else (
+            echo   [正在更新，请稍候...]
+            call "%ROOT%update.bat" main quiet
+            if !ERRORLEVEL! NEQ 0 (
+                echo   [!] 更新失败
+                choice /c YN /n /m "  是否忽略错误继续启动？[Y=继续 N=退出] "
+                if errorlevel 2 (
+                    echo   [已退出，请手动运行 update.bat 排查后重试]
+                    pause
+                    exit /b
+                )
+            ) else (
+                echo   [更新完成：已同步到最新版本]
+            )
+        )
+    ) else if "!UPSTATUS!"=="2" (
+        echo   [版本检测跳过（无 git 或无网络），直接启动]
+    ) else (
+        echo   [已是最新版本]
+    )
 ) else (
     echo [..] 需要管理员权限，正在通过 UAC 提权...
     powershell -Command "Start-Process '%~f0' -Verb runAs"
@@ -38,7 +71,7 @@ REM     未配置 BOT_QQ 时回退到普通登录（不传 -q）
 for /f "tokens=2 delims==" %%i in ('findstr /b "BOT_QQ" "%ROOT%.env" 2^>nul') do set "BOT_QQ=%%i"
 if not defined BOT_QQ set "BOT_QQ="
 echo.
-echo [1/3] 正在启动 NapCat（窗口：NapCat，快速登录 %BOT_QQ%）...
+echo [2/4] 正在启动 NapCat（窗口：NapCat，快速登录 %BOT_QQ%）...
 if defined BOT_QQ (
     start "NapCat" cmd /k "chcp 65001 >nul & cd /d ""%ROOT%Napcat\NapCat.Shell.Windows.Node\napcat"" & launcher.bat -q %BOT_QQ%"
 ) else (
@@ -46,11 +79,11 @@ if defined BOT_QQ (
 )
 
 REM === 3. 启动 bot（venv python，新窗口）===
-echo [2/3] 正在启动 TZtuzhan Bot（窗口：Bot）...
+echo [3/4] 正在启动 TZtuzhan Bot（窗口：Bot）...
 start "TZtuzhan Bot" cmd /k "chcp 65001 >nul & cd /d ""%ROOT%"" & .\.venv\Scripts\python.exe bot.py"
 
 REM === 4. 启动 Web 管理面板（venv python，独立进程 :8800）===
-echo [3/3] 正在启动 Web 管理面板（窗口：WebUI）...
+echo [4/4] 正在启动 Web 管理面板（窗口：WebUI）...
 start "TZtuzhan WebUI" cmd /k "chcp 65001 >nul & cd /d ""%ROOT%"" & .\.venv\Scripts\python.exe webui.py"
 
 echo.

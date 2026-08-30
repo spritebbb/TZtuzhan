@@ -6,6 +6,10 @@ setlocal enabledelayedexpansion
 set "ROOT=%~dp0"
 cd /d "%ROOT%"
 
+REM Quiet mode: pass "quiet" as 2nd arg (e.g. from start-all.bat) to skip pause
+set "QUIET=0"
+if "%2"=="quiet" set "QUIET=1"
+
 echo ==========================================
 echo   TZtuzhan Auto-Update from GitHub
 echo ==========================================
@@ -17,8 +21,8 @@ git --version >nul 2>&1
 if !ERRORLEVEL! NEQ 0 (
     echo   [X] git not found!
     echo   Please install git from https://git-scm.com/download/win
-    echo   (check "Git from the command line and also from 3rd-party software")
-    pause
+    echo   and check "Git from the command line" during install
+    if !QUIET!==0 pause
     exit /b 1
 )
 echo   [OK] git found
@@ -31,12 +35,12 @@ echo   Branch: %BRANCH%
 REM === 3. Init git if needed (deployment package has no .git) ===
 echo [2/4] Setting up git repository ...
 if not exist ".git" (
-    echo   [..] No .git found (deployment package). Initializing ...
+    echo   [..] No .git found - deployment package. Initializing ...
     git init
     git remote add origin https://github.com/spritebbb/TZtuzhan.git
     if !ERRORLEVEL! NEQ 0 (
         echo   [X] Failed to init git
-        pause
+        if !QUIET!==0 pause
         exit /b 1
     )
     echo   [OK] Repository initialized
@@ -49,15 +53,15 @@ echo [3/4] Fetching updates from GitHub (%BRANCH%) ...
 git fetch origin --tags
 if !ERRORLEVEL! NEQ 0 (
     echo   [X] Fetch failed. Check your network / proxy settings.
-    pause
+    if !QUIET!==0 pause
     exit /b 1
 )
 
 echo   Updating to origin/%BRANCH% ...
-git checkout -B %BRANCH% origin/%BRANCH%
+git checkout -f -B %BRANCH% origin/%BRANCH%
 if !ERRORLEVEL! NEQ 0 (
     echo   [X] Checkout failed.
-    pause
+    if !QUIET!==0 pause
     exit /b 1
 )
 
@@ -87,4 +91,4 @@ echo.
 echo   Tip: update.bat dev  -- pull from dev branch
 echo        update.bat main -- pull from main branch (default)
 echo.
-pause
+if !QUIET!==0 pause

@@ -82,7 +82,15 @@ async def handle_proactive(event: PrivateMessageEvent):
     if config.proactive_user_ids and str(event.user_id) not in config.proactive_user_ids:
         await proactive_cmd.finish(Message("……我只对特定的人主动。"))
         return
-    ok = await send_proactive_now(event.bot, str(event.user_id))
+    # PrivateMessageEvent 没有 bot 属性，用 get_bot() 取当前 bot（NoneBot2 matcher 上下文可用）
+    from nonebot import get_bot
+
+    try:
+        bot = get_bot()
+    except ValueError:
+        await proactive_cmd.finish(Message("……暂时联系不上我，等会儿再试"))
+        return
+    ok = await send_proactive_now(bot, str(event.user_id))
     if not ok:
         await proactive_cmd.finish(Message("……酝酿不出来，下次吧"))
 
@@ -630,7 +638,14 @@ async def handle_emoji(event: PrivateMessageEvent):
     if not sticker:
         await emoji_cmd.finish(Message(f"（还没有「{clean}」的表情，多发些表情包我就收集了）"))
         return
-    await _send_sticker_to(event.bot, uid, sticker[0])
+    from nonebot import get_bot
+
+    try:
+        bot = get_bot()
+    except ValueError:
+        await emoji_cmd.finish(Message("……现在没法发表情，等会儿再试"))
+        return
+    await _send_sticker_to(bot, uid, sticker[0])
 
 
 @aff_cmd.handle()

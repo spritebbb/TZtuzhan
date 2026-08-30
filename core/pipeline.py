@@ -43,6 +43,27 @@ async def _extract_topic_lazy(user_id: str) -> None:
         pass
 
 
+async def _extract_triples_lazy(user_id: str) -> None:
+    """后台惰性提取结构化事实五元组（失败静默）。"""
+    try:
+        from .triple_memory import extract_triples, save_triples
+        from .userdb import db as _db
+
+        # 提取最近 30 条消息（去重交给 save_triples）
+        rows = _db.recent_messages(user_id, 30)
+        text = "\n".join(
+            f"{'用户' if r['role'] == 'user' else '菟菚'}：{r['content']}"
+            for r in rows
+        )
+        if len(text) < 10:
+            return
+        triples = await extract_triples(text)
+        if triples:
+            save_triples(user_id, triples, source_msg=text[:200])
+    except Exception:
+        pass
+
+
 _ADDRESS_ASK_WORDS = ("称呼你", "怎么称", "怎么叫", "叫你什么", "想让你怎么称呼", "叫你", "叫法")
 
 
@@ -284,6 +305,16 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
     except Exception:
         logger.exception("[pipeline] 惰性话题提炼调度失败")
 
+    # 1.8) 惰性结构化事实提取：跨场（新会话）时从最近消息提取五元组。
+    # 只在新会话触发，避免每条消息都打一次 LLM（同 key 去重）
+    try:
+        from .tasks import schedule as _schedule2
+
+        if _long_gap(db.last_message_ts(user_id)):
+            _schedule2(f"triples:{user_id}", lambda: _extract_triples_lazy(user_id))
+    except Exception:
+        logger.exception("[pipeline] 惰性三元组提取调度失败")
+
     # 2) 称呼与过分称呼处理（无论是否已设称呼，过分称呼都要检测并扣分）
     pref = user["nickname_pref"]
     bad_address = None
@@ -484,6 +515,15 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
         memory_lines.append(
             "（你记住的关于对方的事）\n" + "\n".join(f"- {f}" for f in facts)
         )
+    # 结构化事实三元组：疑似回忆时做 RAG 检索（纯 TF-IDF，无额外 LLM 成本）
+    try:
+        from .triple_memory import format_triples as _fmt_triples, query_triples
+
+        triples = query_triples(user_id, text)
+        if triples:
+            memory_lines.append(_fmt_triples(triples))
+    except Exception:
+        pass
     if memory_lines:
         messages.append(
             {

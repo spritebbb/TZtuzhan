@@ -120,6 +120,19 @@ CREATE TABLE IF NOT EXISTS diary (
     ts      TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_diary_user_date ON diary(user_id, date);
+-- 结构化事实记忆（五元组：主体-谓词-客体-类型），方向 C
+CREATE TABLE IF NOT EXISTS triples (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    subject     TEXT NOT NULL,
+    subject_type TEXT NOT NULL DEFAULT 'person',
+    predicate   TEXT NOT NULL,
+    object      TEXT NOT NULL,
+    object_type TEXT NOT NULL DEFAULT 'item',
+    source_msg  TEXT NOT NULL DEFAULT '',   -- 来源消息片段（溯源用）
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_triples_user ON triples(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_long_memory_user ON long_memory(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_facts_user ON facts(user_id, id);

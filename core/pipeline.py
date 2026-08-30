@@ -18,6 +18,9 @@ from .userdb import db
 _IDLE_SESSION_MINUTES = 30
 _IDLE_MIN_NEW = 4
 
+# 话题记忆：跨会话延续上次话题的兜底判定（与 _IDLE_SESSION_MINUTES 一致）
+_TOPIC_IDLE_MINUTES = 30
+
 
 def _long_gap(ts: str | None) -> bool:
     """判断某时间戳是否距现在超过空闲阈值。"""
@@ -28,6 +31,16 @@ def _long_gap(ts: str | None) -> bool:
     except ValueError:
         return False
     return (datetime.now() - t).total_seconds() >= _IDLE_SESSION_MINUTES * 60
+
+
+async def _extract_topic_lazy(user_id: str) -> None:
+    """后台惰性提炼话题记忆（失败静默，不阻塞对话）。"""
+    try:
+        from .topic_memory import extract_topic
+
+        await extract_topic(user_id)
+    except Exception:
+        pass
 
 
 _ADDRESS_ASK_WORDS = ("称呼你", "怎么称", "怎么叫", "叫你什么", "想让你怎么称呼", "叫你", "叫法")
@@ -253,6 +266,15 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
     except Exception:
         logger.exception("[pipeline] 惰性画像提炼调度失败")
 
+    # 1.7) 惰性话题记忆：长时间没聊（新会话开场前）提炼"上次聊到哪"，让菟菚能接着聊
+    try:
+        from .tasks import schedule
+
+        if _long_gap(db.last_message_ts(user_id)):
+            schedule(f"topic:{user_id}", lambda: _extract_topic_lazy(user_id))
+    except Exception:
+        logger.exception("[pipeline] 惰性话题提炼调度失败")
+
     # 2) 称呼与过分称呼处理（无论是否已设称呼，过分称呼都要检测并扣分）
     pref = user["nickname_pref"]
     bad_address = None
@@ -324,6 +346,30 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
     )
     messages = [{"role": "system", "content": system}]
 
+    # 4.0.2) 新会话开场：距离上一场聊完较久（跨场）且有记录的上次话题时，
+    # 让菟菚像记得似的自然接上，而不是每次都像重新认识。只在真正开场时提一次。
+    try:
+        if _long_gap(db.last_message_ts(user_id)):
+            from .topic_memory import build_continuation
+
+            continuation = build_continuation(user_id)
+            if continuation:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "这是隔了一阵子后你们又开始聊（对方发来新消息，是新一轮的开场）。"
+                            "你隐约记得上次你们聊到："
+                            + continuation
+                            + "。可以自然地接上一句（像还记得、随口一提），"
+                            "但别生硬地翻旧账、别追问个没完；如果对方开启的是新话题，就跟新话题走，"
+                            "旧话题只是你心里的背景，不是开场白。"
+                        ),
+                    }
+                )
+    except Exception:
+        logger.exception("[pipeline] 话题延续注入失败")
+
     # 4.0.5) 网络热梗：让菟菚熟知近期热梗，能在对话里自然使用
     try:
         from .memes import get_current_memes, has_memes, schedule_refresh
@@ -388,35 +434,38 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
     except Exception:
         logger.exception("[pipeline] 节日注入失败")
 
+    # 4.1) 记忆相关：压缩摘要 + 记忆原文 + 长期事实，合并成一个「记得的过去」块，
+    # 减少堆砌：把三条独立 system 消息合成一段，LLM 更容易当背景吸收而不是逐条服从。
+    memory_lines: list[str] = []
     if compact_summary:
+        memory_lines.append(
+            "（更早的对话摘要，作为长期背景，自然融入，不用复述）\n" + compact_summary
+        )
+    if remembered:
+        memory_lines.append(
+            "（你记得的这些过去的事）\n" + "\n".join(f"- {t}" for t in remembered)
+        )
+    if facts:
+        memory_lines.append(
+            "（你记住的关于对方的事）\n" + "\n".join(f"- {f}" for f in facts)
+        )
+    if memory_lines:
         messages.append(
             {
                 "role": "system",
                 "content": (
-                    "以下是你们之前聊过的一段更早的对话的摘要（作为长期背景，自然融入，不用复述）：\n"
-                    + compact_summary
+                    "你记得的关于你们和对方的过去：\n"
+                    + "\n\n".join(memory_lines)
+                    + "\n这些都只是你的记忆背景：想起来就自然融入，想不起来就别硬凑；"
+                    "不要逐条汇报、不要『我记得你说过…』式开场白刷屏。"
                 ),
             }
         )
 
-    if remembered:
-        messages.append(
-            {
-                "role": "system",
-                "content": "你记得这些过去的事（作为参考，自然融入）：\n"
-                + "\n".join(f"- {t}" for t in remembered),
-            }
-        )
-    if facts:
-        messages.append(
-            {
-                "role": "system",
-                "content": "你记住的关于对方的事（自然融入，不要复述）：\n"
-                + "\n".join(f"- {f}" for f in facts),
-            }
-        )
-
-    # 4.1.6) 用户画像：结构化记录对方的信息/喜好/厌恶/习惯/性格，自然引用
+    # 4.2) 对对方的了解：画像 + 口头禅/黑话 + 场景风格 + 说话风格，合成一条注入。
+    # 各功能仍按开关独立收集（关掉的不注入），但合成一条 system 消息：
+    # 避免一堆并列指令压着模型（堆砌），而是像"你心里对这个人越摸越清"一样自然。
+    understanding_parts: list[str] = []
     try:
         from .features import flag
         from .profile import profile_prompt_text
@@ -424,21 +473,9 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
         if flag("profile_enabled"):
             profile = profile_prompt_text(user_id)
             if profile:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            profile
-                            + "\n这是你渐渐摸清的对方的画像。在对话里自然地体现出你懂他/她："
-                            "话题合适时随口带一句（比如他提到吃的你记得他爱吃什么、他低落时你记得他讨厌什么），"
-                            "别突然背画像、别复述列表，就像相处久了自然记得。"
-                        ),
-                    }
-                )
+                understanding_parts.append(f"【对方的画像】\n{profile}")
     except Exception:
         logger.exception("[pipeline] 用户画像注入失败")
-
-    # 4.1.7) 口头禅/黑话：记住对方爱用的词，自然使用营造同频感
     try:
         from .features import flag
         from .terms import terms_prompt_text
@@ -446,20 +483,9 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
         if flag("terms_enabled"):
             terms = terms_prompt_text(user_id)
             if terms:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            terms
-                            + "\n这些是你注意到对方爱用的词。在对话里合适时，可以自然地、克制地用上一两个，"
-                            "营造『你也是这么说话的』的同频感；别堆砌、别每句都用，用得不顺就别用。"
-                        ),
-                    }
-                )
+                understanding_parts.append(f"【对方爱用的词】\n{terms}")
     except Exception:
         logger.exception("[pipeline] 口头禅注入失败")
-
-    # 4.1.8) 场景化表达风格：对方在不同场景的表达方式，对应场景自然贴合
     try:
         from .features import flag
         from .style import style_map_prompt_text
@@ -467,29 +493,22 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
         if flag("style_enabled"):
             style_map = style_map_prompt_text(user_id)
             if style_map:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            style_map
-                            + "\n这是你观察到的对方在不同场景的表达方式。当对话进入对应场景时，"
-                            "自然地用对方的方式回应（比如他倾诉时你用他习惯的短句节奏、他开玩笑时用他的调侃方式），"
-                            "营造『你懂他怎么说话』的默契；但别照搬得生硬，始终保持你自己的慵懒温柔。"
-                        ),
-                    }
-                )
+                understanding_parts.append(f"【对方不同场景的表达方式】\n{style_map}")
     except Exception:
         logger.exception("[pipeline] 场景风格注入失败")
-
-    # 逐渐学习对方说话风格（由每日/定期提炼，注入供自然模仿）
     style = db.get_style(user_id)
     if style:
+        understanding_parts.append(f"【你逐渐观察到的对方说话风格】\n{style}")
+    if understanding_parts:
         messages.append(
             {
                 "role": "system",
                 "content": (
-                    f"你逐渐观察到的对方的说话风格：{style}\n"
-                    "自然地模仿对方的说话习惯（短句/语气词/表情节奏），但别生硬、别学得过头，保持你自己的慵懒温柔。"
+                    "这是你渐渐对这个人摸清的样子（是你心里知道的，不是要你背出来的列表）：\n"
+                    + "\n\n".join(understanding_parts)
+                    + "\n相处久了自然记得这些：合适的时候随口体现一两点（他提到吃的你记得他爱吃什么、"
+                    "他低落时你记得他讨厌什么、他开玩笑时你用他习惯的节奏），"
+                    "千万别一口气全倒出来、别『我了解到你…』式汇报。宁可用不上，也别堆砌。"
                 ),
             }
         )

@@ -52,6 +52,77 @@ def _period_hint() -> str:
     return ""
 
 
+# ---- 多场景主动：节日 / 特殊日子 / 天气 / 深夜安慰 ----
+
+def _festival_hint() -> str:
+    """今天是中国节日时返回节日提示（否则空）。"""
+    try:
+        from .holidays import today_holidays
+
+        names = today_holidays()
+        if names:
+            return "、".join(names)
+    except Exception:
+        pass
+    return ""
+
+
+def _special_date_hint(user_id: str) -> str:
+    """今天是用户设定的特殊日子（生日/纪念日等）时返回提示（否则空）。"""
+    try:
+        from .userdb import get_today_important_dates
+
+        today_dates = get_today_important_dates(user_id)
+        if today_dates:
+            return "、".join(d["label"] for d in today_dates)
+    except Exception:
+        pass
+    return ""
+
+
+def _weather_hint(city: str) -> str:
+    """今日天气与心情提示（有天气时返回，否则空）。"""
+    try:
+        from .mood import today_weather
+
+        weather, base = today_weather(city)
+        if weather and weather != "未知":
+            if "雨" in weather:
+                return f"今天天气：{weather}。下雨了，这样的天气你会想赖在家里吧。"
+            if "雪" in weather:
+                return f"今天天气：{weather}。下雪了，很适合窝在一起说点暖的话。"
+            return f"今天天气：{weather}。天气会悄悄影响心情，可以轻轻提一句。"
+    except Exception:
+        pass
+    return ""
+
+
+def _late_night_hint() -> str:
+    """深夜时段（23-5点）返回安慰提示（否则空）。"""
+    h = datetime.now().hour
+    if h >= 23 or h < 5:
+        return "现在是深夜。如果你还醒着，大概是心里有事或者睡不着，可以温柔地陪一会儿。"
+    return ""
+
+
+def _scenario_hint(user_id: str, city: str) -> str:
+    """组合各场景提示，用于主动消息生成：节日/特殊日子优先，其次是深夜安慰/天气。"""
+    parts = []
+    festival = _festival_hint()
+    if festival:
+        parts.append(f"今天是中国节日：{festival}。如果合适，可以从节日由头开始（轻轻祝福一句，别太隆重）。")
+    special = _special_date_hint(user_id)
+    if special:
+        parts.append(f"今天是对方重要的日子：{special}。记得要提一提，这是你心里有ta的证明（自然、别刻意）。")
+    late = _late_night_hint()
+    if late:
+        parts.append(late)
+    weather = _weather_hint(city)
+    if weather:
+        parts.append(weather)
+    return "\n".join(parts)
+
+
 def set_active_user(user_id: str) -> None:
     _active_user["id"] = user_id
 
@@ -91,6 +162,18 @@ async def proactive_message(user_id: str) -> str:
             ),
         }
     )
+    # 多场景由头：节日/特殊日子/深夜安慰/天气，让主动消息有"由头"而不是凭空搭话
+    scenario = _scenario_hint(user_id, config.mood_city)
+    if scenario:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "今天/此刻有这些特别之处，可以在主动消息里自然带上（挑最合适的一个就够，别全塞）：\n"
+                    + scenario
+                ),
+            }
+        )
     # 关联近期话题：从最近的对话里找 1-2 个由头，让主动消息像"接着上次聊"而不是凭空搭话
     recent = short_term_messages(user_id)
     if recent:
@@ -105,26 +188,6 @@ async def proactive_message(user_id: str) -> str:
                     f"你们最近的对话大致是：{tail}\n"
                     "可以从中挑一个自然的话题开头（比如对方上次提到的某件事），"
                     "但别复述原文、别像汇报，就像突然想起随口一提。"
-                ),
-            }
-        )
-    # 情感记忆：今天有特殊日子（生日/纪念日）时，优先用这个由头
-    try:
-        from .userdb import get_today_important_dates
-
-        today_dates = get_today_important_dates(user_id)
-    except Exception:
-        logger.exception("[主动] 特殊日子查询失败")
-        today_dates = []
-    if today_dates:
-        labels = "、".join(d["label"] for d in today_dates)
-        messages.append(
-            {
-                "role": "system",
-                "content": (
-                    f"今天是特殊的日子：{labels}。"
-                    "如果合适，主动消息就从这个由头开始（比如轻轻说一句今天是你的生日/纪念日），"
-                    "自然一点，别太隆重，保持你的慵懒温柔。"
                 ),
             }
         )
@@ -236,7 +299,10 @@ async def run_scheduler() -> None:
         today = datetime.now().date().isoformat()
         for user_id in _target_user_ids():
             age = _age_hours(db.last_message_ts(user_id))
-            if age is None or age < config.proactive_idle_hours:
+            # 特殊日子（节日/用户的生日/纪念日）：当天即使刚聊过也要主动一次，
+            # 不因"离上次说话太近"而错过该说的祝福。其余日子仍按久别阈值。
+            is_special_day = bool(_festival_hint() or _special_date_hint(user_id))
+            if not is_special_day and (age is None or age < config.proactive_idle_hours):
                 continue
 
             last_pro = db.get_last_proactive(user_id)

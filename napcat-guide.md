@@ -5,11 +5,11 @@ NapCat 是 QQNT 的协议实现，负责让 bot 能收发 QQ 私聊消息。
 
 ## ✅ 本机已配置完成（实测可用）
 
-- NapCat：`D:\DSH\TZtuzhan\Napcat\NapCat.Shell.Windows.Node\`（v4.18.19）
-- 启动脚本：**`napcat\launcher.bat`**（官方，带管理员提权；通过注册表找到 `D:\QQ\QQ.exe`）
-- QQNT：`D:\QQ\QQ.exe`（版本 9.9.33，已注册到注册表，launcher 能自动找到）
+- NapCat：`<你的项目目录>\Napcat\NapCat.Shell.Windows.Node\`（v4.18.19；部署包已内置）
+- 启动脚本：**`napcat\launcher.bat`**（官方，带管理员提权；通过注册表自动找到本机 QQ）
+- QQNT：本机安装的 QQ 9.x 新版客户端（launcher 通过注册表自动定位）
 - bot QQ 号：**（你的 bot 小号，见 .env 的 BOT_QQ）**
-- OneBot 正向 WS：**端口 3001**（已写入 `napcat\config\onebot11_<BotQQ>.json`）
+- OneBot 正向 WS：**端口 3001**（`install.bat` 会按 `BOT_QQ` 自动生成 `napcat\config\onebot11_<BotQQ>.json`）
 - WebUI：`http://127.0.0.1:6099`（token 见 `config\webui.json`）
 - 配置文件（NapCat）已加入 `.gitignore`，不会进仓库
 
@@ -17,14 +17,16 @@ NapCat 是 QQNT 的协议实现，负责让 bot 能收发 QQ 私聊消息。
 
 **终端 ① —— NapCat（用官方 launcher.bat，会弹管理员/UAC 确认）：**
 ```powershell
-cd D:\DSH\TZtuzhan\Napcat\NapCat.Shell.Windows.Node\napcat
+cd <你的项目目录>\Napcat\NapCat.Shell.Windows.Node\napcat
 launcher.bat
 ```
 （它需要管理员权限注入 QQNT；登录过的小号一般会自动登录，若弹码就扫码。）
 
+> 💡 用部署包的话无需手动开终端——直接双击根目录 `start-all.bat` 即可一次性拉起 NapCat + bot + WebUI。
+
 **终端 ② —— bot：**
 ```powershell
-cd D:\DSH\TZtuzhan
+cd <你的项目目录>
 .\.venv\Scripts\python.exe bot.py
 ```
 日志出现 `OneBot V11 | Bot <你的botQQ> connected` 即连接成功。
@@ -82,7 +84,7 @@ Get-NetTCPConnection -LocalPort 3001 -State Listen
 有输出即成功。然后运行 bot：
 
 ```powershell
-cd D:\DSH\TZtuzhan
+cd <你的项目目录>
 .\.venv\Scripts\python.exe bot.py
 ```
 

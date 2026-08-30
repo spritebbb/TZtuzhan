@@ -208,7 +208,7 @@ TZtuzhan/
 **一键脚本**（推荐，国内网络加 `-Mirror` 走清华镜像）：
 
 ```powershell
-cd D:\DSH\TZtuzhan
+cd <你的项目目录>
 powershell -ExecutionPolicy Bypass -File setup.ps1 -Mirror
 ```
 
@@ -263,7 +263,7 @@ NapCat 是 QQNT 的协议实现，负责把 bot 接到 QQ。详细图文见 [`na
 Windows 一键启动脚本（自动带版本检测 + 拉起 WebUI）：
 
 ```powershell
-cd D:\DSH\TZtuzhan
+cd <你的项目目录>
 .\start-all.bat        # 启动前检测 GitHub 更新 → 拉起 NapCat + bot + WebUI（三窗口）
 ```
 
@@ -299,7 +299,7 @@ powershell -ExecutionPolicy Bypass -File .\install-watchdog.ps1 -Remove  # 取�
 
 或手动：
 ```powershell
-schtasks /create /tn "TZtuzhanWatchdog" /tr "powershell -NoProfile -ExecutionPolicy Bypass -File D:\DSH\TZtuzhan\watchdog.ps1" /sc onlogon /rl highest
+schtasks /create /tn "TZtuzhanWatchdog" /tr "powershell -NoProfile -ExecutionPolicy Bypass -File <你的项目目录>\watchdog.ps1" /sc onlogon /rl highest
 schtasks /delete /tn "TZtuzhanWatchdog" /f   # 取消自启
 ```
 

@@ -685,29 +685,25 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
         )
 
     # 5) 先思考再说话：让模型输出【思考】+【回复】，只把【回复】发给对方
-    messages.append(
-        {
-            "role": "system",
-            "content": (
-                "回复前先在心里想一想，感受对方这句话背后的情绪和意图，掂量怎么接最自然、分寸怎么拿捏。"
-                "然后输出两段：\n"
-                "【思考】你内心真实的想法（用你自己的语气，不发给对方，不用客套）\n"
-                "【回复】你实际发给对方的话（保持你的风格：短句、慵懒温柔、像发消息一截一截）。\n"
-                "条数完全看内容：接得住就一句，需要铺开就两句三句，别为了凑数或开头就固定成几段。\n"
-                "特别地，要会看语境判断「该不该继续说」：\n"
-                "- 对方说晚安/再见/结束话题/要睡觉去 → 你已经道过别或话已说到位，就**简短收尾，1 条最多**（如『晚安』『明天见』），"
-                "别接着发多条、别找新话题、别追问；对方已经说了『明天见』，你就别再重复一遍『明天见』。\n"
-                "- 对方的话你已经接住了、没有可延续的 → 回一句就够，不要为了显得热情而硬凑第二句。\n"
-                "- 真正值得展开的话题（对方在倾诉、问问题、抛梗、求安慰）→ 才多说几句。\n"
-                "另外，当你聊到或想到某个**具体的画面/景象**（眼前的花田、窗外的雨、桌上的猫、夕阳、星空…）时，"
-                "可以用一两句话把这个画面描述得生动、鲜活一点，然后自然地问对方『要不要看看』『想不想看』——"
-                "像是在分享你眼前的美好。但只在真的合适、你能自然地想到画面时才这样，别为了触发而硬编画面。\n"
-                "两段都要写，【回复】才是对方会看到的。"
-            ),
-        }
+    think_block = (
+        "回复前先在心里想一想，感受对方这句话背后的情绪和意图，掂量怎么接最自然、分寸怎么拿捏。"
+        "然后输出两段：\n"
+        "【思考】你内心真实的想法（用你自己的语气，不发给对方，不用客套）\n"
+        "【回复】你实际发给对方的话（保持你的风格：短句、慵懒温柔、像发消息一截一截）。\n"
+        "条数完全看内容：接得住就一句，需要铺开就两句三句，别为了凑数或开头就固定成几段。\n"
+        "特别地，要会看语境判断「该不该继续说」：\n"
+        "- 对方说晚安/再见/结束话题/要睡觉去 → 你已经道过别或话已说到位，就**简短收尾，1 条最多**（如『晚安』『明天见』），"
+        "别接着发多条、别找新话题、别追问；对方已经说了『明天见』，你就别再重复一遍『明天见』。\n"
+        "- 对方的话你已经接住了、没有可延续的 → 回一句就够，不要为了显得热情而硬凑第二句。\n"
+        "- 真正值得展开的话题（对方在倾诉、问问题、抛梗、求安慰）→ 才多说几句。\n"
+        "另外，当你聊到或想到某个**具体的画面/景象**（眼前的花田、窗外的雨、桌上的猫、夕阳、星空…）时，"
+        "可以用一两句话把这个画面描述得生动、鲜活一点，然后自然地问对方『要不要看看』『想不想看』——"
+        "像是在分享你眼前的美好。但只在真的合适、你能自然地想到画面时才这样，别为了触发而硬编画面。\n"
+        "两段都要写，【回复】才是对方会看到的。"
     )
 
     # 5.0) 话题锚定：明确"当前在聊什么"，避免回复被旧上下文带偏/跑题/串话题
+    topic_block = None
     try:
         from .context import build_topic_system
 
@@ -715,20 +711,44 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
         recent_user_texts = [m["content"] for m in ctx if m.get("role") == "user"]
         hint = build_topic_system(text, recent_user_texts, len(ctx))
         if hint:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": (
-                        "关于当前这轮的上下文要点：\n" + hint
-                        + "\n注意：只把它当作把握方向用的提醒，回复仍要自然、口语化，"
-                        "不要复述这些提醒本身。"
-                    ),
-                }
+            topic_block = (
+                "关于当前这轮的上下文要点：\n" + hint
+                + "\n注意：只把它当作把握方向用的提醒，回复仍要自然、口语化，"
+                "不要复述这些提醒本身。"
             )
     except Exception:
         logger.exception("[pipeline] 话题锚定失败（不影响回复）")
 
-    raw = await chat(messages, mock=mock)
+    # 5.1) 工具调用循环：意图路由判定需要搜索时，让 LLM 用 ```tool``` 代码块自主调工具
+    # （web_search / get_weather），结果注入下一轮，最多 N 轮；失败/闲聊一律回退普通对话。
+    use_tool_loop = False
+    try:
+        use_tool_loop = (
+            not mock
+            and intent is not None
+            and intent.get("need_search")
+            and not search_hits  # 规则搜索已提前注入结果 → 不再走工具循环，避免重复搜索
+        )
+    except Exception:
+        pass
+
+    if use_tool_loop:
+        from .tool_loop import run_tool_loop
+
+        final_instruction = [{"role": "system", "content": think_block}]
+        if topic_block:
+            final_instruction.append({"role": "system", "content": topic_block})
+        raw = await run_tool_loop(
+            messages,
+            lambda ms: chat(ms, mock=mock),
+            max_loops=2,
+            final_instruction=final_instruction,
+        )
+    else:
+        messages.append({"role": "system", "content": think_block})
+        if topic_block:
+            messages.append({"role": "system", "content": topic_block})
+        raw = await chat(messages, mock=mock)
     reply = strip_actions(_extract_reply(raw))
     reply = trim_farewell(text, reply)
 

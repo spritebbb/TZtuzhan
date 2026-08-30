@@ -1,15 +1,15 @@
-﻿# 打包 TZtuzhan v1.2.0 Release zip
-# 排除：.venv / data / Napcat / __pycache__ / 旧zip / .env(密钥) / .git
+# Package TZtuzhan v1.3.0 Release zip
+# Exclude: .venv / data / Napcat / __pycache__ / old zips / .env(secret) / .git
 $ErrorActionPreference = 'Stop'
 $Root = 'D:\DSH\TZtuzhan'
-$Version = 'v1.2.0'
+$Version = 'v1.3.0'
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmm'
-$OutZip = Join-Path $Root "TZtuzhan-$Version-$Stamp.zip"
+$OutZip = Join-Path $Root ('TZtuzhan-' + $Version + '-' + $Stamp + '.zip')
 
 $ExcludeDirs = @('.venv', 'data', 'Napcat', '.git', '__pycache__', 'node_modules', '.pytest_cache')
-$ExcludeFiles = @('*.zip', '.env', '.env.example')
+# .env(real secret) / debug scripts / old zips excluded; .env.example kept as template
+$ExcludeFiles = @('*.zip', '.env', 'tools_*.py', '_syntax_check.py', 'commit_msg.txt', 'REPORT.md', 'TESTING.md')
 
-# 收集要打包的文件（相对路径）
 $files = Get-ChildItem $Root -Recurse -File | Where-Object {
     $rel = $_.FullName.Substring($Root.Length + 1)
     $dirs = $rel -split '\\'
@@ -25,9 +25,8 @@ $files = Get-ChildItem $Root -Recurse -File | Where-Object {
     -not $skip
 }
 
-Write-Host "收集到 $($files.Count) 个文件"
+Write-Host ('Collected ' + $files.Count + ' files')
 
-# 删除旧 zip
 if (Test-Path $OutZip) { Remove-Item $OutZip -Force }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -42,4 +41,4 @@ try {
 }
 
 $size = (Get-Item $OutZip).Length
-Write-Host "✅ 打包完成: $OutZip ($size 字节, $($files.Count) 个文件)"
+Write-Host ('Pack done: ' + $OutZip + ' (' + $size + ' bytes, ' + $files.Count + ' files)')

@@ -42,6 +42,10 @@ search_cmd = on_command("搜索", aliases={"搜"}, priority=4, block=True)
 proactive_cmd = on_command("主动", priority=4, block=True)
 dates_cmd = on_command("日子", aliases={"特殊日子", "纪念日"}, priority=4, block=True)
 draw_cmd = on_command("画", aliases={"画画", "生成图片", "生图", "图片"}, priority=4, block=True)
+diary_cmd = on_command("日记", aliases={"写日记", "看看日记"}, priority=4, block=True)
+guess_cmd = on_command("猜数字", aliases={"猜数", "来猜数字"}, priority=4, block=True)
+rps_cmd = on_command("石头剪刀布", aliases={"剪刀石头布", "猜拳"}, priority=4, block=True)
+story_cmd = on_command("故事", aliases={"睡前故事", "讲个故事", "晚安故事"}, priority=4, block=True)
 
 
 def _cmd_arg(plain: str, *names: str) -> str:
@@ -682,3 +686,76 @@ async def handle_dates(event: PrivateMessageEvent):
         return
 
     await dates_cmd.finish(Message("用法：/日子（查看）｜/日子 12-25 你的生日｜/日子 删除 1"))
+
+
+@diary_cmd.handle()
+async def handle_diary(event: PrivateMessageEvent):
+    """日记：/日记 → 看今天的日记（没有就生成一篇）。"""
+    if not isinstance(event, PrivateMessageEvent):
+        return
+    uid = str(event.user_id)
+    from core.fun import diary_text, generate_diary
+
+    existing = diary_text(uid)
+    if existing != "（今天还没写日记呢……）":
+        await diary_cmd.finish(Message(existing))
+        return
+    await diary_cmd.send(Message("……嗯，让我想想今天的事，写进本子里。"))
+    try:
+        text = await generate_diary(uid)
+    except Exception:
+        logger.exception("[日记] 生成失败")
+        text = None
+    if text:
+        await diary_cmd.finish(Message(text))
+    else:
+        await diary_cmd.finish(Message("……今天的事太碎，还没攒成一页纸，明天再写吧。"))
+
+
+@guess_cmd.handle()
+async def handle_guess(event: PrivateMessageEvent):
+    """猜数字：/猜数字 → 开始；直接发数字 → 猜。"""
+    if not isinstance(event, PrivateMessageEvent):
+        return
+    uid = str(event.user_id)
+    text = _cmd_arg(event.get_plaintext(), "猜数字", "猜数", "来猜数字")
+    from core.fun import guess_number, start_guess_game
+
+    if text and text.isdigit():
+        reply = guess_number(uid, int(text))
+    else:
+        reply = start_guess_game(uid)
+    await guess_cmd.finish(Message(reply))
+
+
+@rps_cmd.handle()
+async def handle_rps(event: PrivateMessageEvent):
+    """石头剪刀布：/石头剪刀布 石头 → 出拳。"""
+    if not isinstance(event, PrivateMessageEvent):
+        return
+    uid = str(event.user_id)
+    text = _cmd_arg(event.get_plaintext(), "石头剪刀布", "剪刀石头布", "猜拳")
+    from core.fun import rps_play
+
+    choice = text if text in ("石头", "剪刀", "布") else (text or "")
+    await rps_cmd.finish(Message(rps_play(uid, choice)))
+
+
+@story_cmd.handle()
+async def handle_story(event: PrivateMessageEvent):
+    """睡前故事：/故事 → 菟菚讲一篇晚安小故事。"""
+    if not isinstance(event, PrivateMessageEvent):
+        return
+    uid = str(event.user_id)
+    await story_cmd.send(Message("嗯……躺好了吗？我讲个故事给你听。"))
+    try:
+        from core.fun import bedtime_story
+
+        story = await bedtime_story(uid)
+    except Exception:
+        logger.exception("[故事] 生成失败")
+        story = ""
+    if story:
+        await story_cmd.finish(Message(story))
+    else:
+        await story_cmd.finish(Message("……故事在风里飘走了，改天再讲给你听吧。"))

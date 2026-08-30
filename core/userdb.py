@@ -111,6 +111,15 @@ CREATE TABLE IF NOT EXISTS user_style_map (
     count    INTEGER NOT NULL DEFAULT 1,
     ts       TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS diary (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    date    TEXT NOT NULL,       -- 日期 YYYY-MM-DD
+    content TEXT NOT NULL,       -- 日记正文（菟菚视角）
+    mood    TEXT NOT NULL DEFAULT '',  -- 当天心情标签
+    ts      TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_diary_user_date ON diary(user_id, date);
 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_long_memory_user ON long_memory(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_facts_user ON facts(user_id, id);

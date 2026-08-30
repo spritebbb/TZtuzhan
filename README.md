@@ -6,7 +6,7 @@
 
 温柔 · 慵懒 · 病娇 · 爱晒太阳 · 爱黏人
 
-[![Version](https://img.shields.io/badge/version-v1.3.0-8a5cf6?style=flat-square)](https://github.com) [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org) [![NoneBot2](https://img.shields.io/badge/NoneBot2-2.x-4EC0D0?style=flat-square&logo=nonebot&logoColor=white)](https://nonebot.dev) [![License](https://img.shields.io/badge/license-MIT-important?style=flat-square)]()
+[![Version](https://img.shields.io/badge/version-v1.3.1-8a5cf6?style=flat-square)](https://github.com) [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org) [![NoneBot2](https://img.shields.io/badge/NoneBot2-2.x-4EC0D0?style=flat-square&logo=nonebot&logoColor=white)](https://nonebot.dev) [![License](https://img.shields.io/badge/license-MIT-important?style=flat-square)]()
 
 > 固定单人格 · QQ 私聊 · 完整记忆 · 好感度 · 心情 · 日程 · 节日 · 识图/生图 · 热梗 · 主动消息 · 意图路由 · 工具调用
 
@@ -27,7 +27,7 @@
 | 🎨 | 场景化表达风格（对应场景自然贴合） | 😂 | 表情包情绪匹配（按情绪回发收藏） |
 | 🖥️ | Web 管理面板（仪表盘/功能开关/数据管理） | 🧭 | 意图路由（闲聊/回忆/情感分流，减少堆砌） |
 | 🔧 | LLM 自主工具调用（搜索/天气，两轮迭代） | 🧩 | 结构化事实记忆（五元组 + RAG 检索注入） |
-| ✅ | 189 项自动化测试 | 🔒 | 全参数化 SQL · 敏感信息不入库 |
+| ✅ | 195 项自动化测试 | 🔒 | 全参数化 SQL · 敏感信息不入库 |
 
 ---
 
@@ -41,7 +41,7 @@ TZtuzhan/
 ├── .env.example            # 配置模板（复制为 .env 填写）
 ├── napcat-guide.md         # Windows NapCat 部署指引
 ├── persona-菟菚.md         # 🌿 人格源文件（唯一人格来源）
-├── tests/                  # pytest 自动化测试（189 项）
+├── tests/                  # pytest 自动化测试（195 项）
 ├── core/
 │   ├── config.py           # .env 配置加载
 │   ├── persona.py          # 人格加载 + 动态注入
@@ -476,7 +476,7 @@ DRIVER=~aiohttp                           # 用 aiohttp driver 支持 WS 客户�
 ### 🖥️ Web 管理面板（可选，独立进程）
 
 - 🌐 **访问**：启动后浏览器打开 `http://127.0.0.1:8800`（只监听本机）
-- 🚀 **启动**：`python webui.py`（仅需 fastapi/uvicorn，由 nonebot2 自带 + python-multipart）
+- 🚀 **启动**：`python webui.py`（仅需 fastapi/uvicorn，由 nonebot2 自带 + python-multipart）；或直接运行 `start-all.bat` 随 bot 一起自动拉起
 - 📊 **仪表盘**：好感度/羁绊/心情/画像/口头禅/风格/表情/特殊日子/记忆/消息 全量统计
 - 🔧 **功能开关**：用户画像 / 口头禅·黑话 / 场景风格 / 表情情绪匹配，点击即时开关
 - 💕 **好感度**：当前值/阶段/羁绊/进度条 + 好感度变动日志 + 调节
@@ -488,6 +488,7 @@ DRIVER=~aiohttp                           # 用 aiohttp driver 支持 WS 客户�
 - 🎨 **风格管理**：查看/删除场景化表达风格 + 整体风格描述
 - 😂 **表情收藏**：查看收藏的表情及其情绪标签
 - 💬 **对话记录**：最近 100 条聊天记录；📋 **日志**：bot/watchdog 日志尾部
+- 🔑 **配置**：在线查看/编辑 `.env`（密钥掩码显示，保存后重启生效）
 - ⚙️ **系统**：配置状态（LLM/识图/生图/搜索/天气/主动消息）+ users 表 + 数据路径
 
 ---
@@ -515,6 +516,22 @@ DRIVER=~aiohttp                           # 用 aiohttp driver 支持 WS 客户�
 ## 📦 更新日志
 
 <details open>
+<summary><b>v1.3.1（2026-08-30）— 配置 API · 锁修复 · WebUI 一键整合</b></summary>
+
+**新功能**
+- 🔑 **Web 面板配置 API**：新增 `/config` 页面，在线查看/编辑 `.env`（LLM/识图/生图/搜索/心情等 24 项）；
+  密钥掩码显示（`sk-****abcd`）、白名单过滤防注入、空值保留原配置、保存后重启生效
+- 🚀 **一键启动整合**：`start-all.bat` 自动拉起 Web 管理面板（NapCat + bot + WebUI 三个窗口）；
+  `stop-bot.ps1` 同步停止 bot 与 WebUI
+
+**修复**
+- 🐛 **database is locked**：向量回填改为三阶段（锁外扫描 + 锁外 embedding、锁内快插分批提交），
+  杜绝回填期间持 SQLite 写锁阻塞主线程写入
+- 🧪 自动化测试 189 → **195 项**
+
+</details>
+
+<details>
 <summary><b>v1.3.0（2026-08-30）— 意图路由 · 工具调用 · 质量加固</b></summary>
 
 **新功能**

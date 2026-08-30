@@ -234,6 +234,15 @@ async def process(user_id: str, text: str, *, mock: bool = False, merged_msg: bo
                     affection.try_daily_bonus(user_id, "proactive_resp", affection.PROACTIVE_RESPONSE_BONUS, "回应菟菚的主动消息")
         except Exception:
             pass
+        # 道歉（修复关系，抵消前扣分）
+        if affection.check_apology(text):
+            affection.try_daily_bonus(user_id, "apology", affection.APOLOGY_BONUS, "真诚道歉")
+        # 分享心事/秘密（走心互动）
+        if affection.check_sharing(text):
+            affection.try_daily_bonus(user_id, "sharing", affection.SHARING_BONUS, "分享心事/秘密")
+        # 夸菟菚
+        if affection.check_compliment(text):
+            affection.try_daily_bonus(user_id, "compliment", affection.COMPLIMENT_BONUS, "夸菟菚")
     except Exception:
         logger.exception("[pipeline] 好感度即时奖励失败")
 

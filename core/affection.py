@@ -31,6 +31,12 @@ PROACTIVE_RESPONSE_BONUS = 2  # 回应菟菚的主动消息（每日上限1次�
 DEEP_CHAT_BONUS = 2           # 当天有深度/走心对话（每日总结判定）
 MEMORY_REFERENCE_BONUS = 1    # 用户提到过去共同经历/菟菚提过的事（每日上限1次）
 
+# ---- v3 新增互动触发（好感度深化：更多真实感触发事件）----
+APOLOGY_BONUS = 2             # 用户真诚道歉（每日上限1次，抵消前扣分）
+SHARING_BONUS = 1             # 用户主动分享心事/烦恼/秘密（每日上限1次）
+COMPLIMENT_BONUS = 1          # 用户夸菟菚（每日上限1次）
+GAME_PLAY_BONUS = 1           # 用户陪菟菚玩小游戏（每日上限1次）
+
 # ---- 惩罚调优 ----
 _SPAM_WINDOW_SECONDS = 8      # 放宽到 8 秒（原10秒）
 _SPAM_MAX_COUNT = 4           # 放宽到 4 条（原3条）
@@ -151,6 +157,46 @@ def check_care(text: str) -> bool:
     """判断用户是否在关心菟菚。"""
     lowered = text.lower()
     return any(w in lowered for w in CARE_WORDS)
+
+
+# 用户道歉/求原谅（修复关系，抵消前扣分）
+APOLOGY_WORDS = [
+    "对不起", "抱歉", "是我的错", "我错了", "原谅我", "别生气", "我不好",
+    "是我不好", "向你道歉", "对不起啦", "别不理我", "我知道错了", "我再也不了",
+    "我反省", "我不该", "下次不会了", "别生我的气",
+]
+
+# 用户主动分享心事/烦恼/秘密（走心互动）
+SHARING_WORDS = [
+    "跟你说个事", "告诉你一个秘密", "告诉你个秘密", "跟你讲讲", "我最近有点烦",
+    "我心里难受", "悄悄告诉你", "想跟你说说", "跟你倾诉", "跟你说心里话",
+    "跟你讲个事", "跟你说说心里话", "跟你说点心里话", "跟你说件", "跟你聊聊最近",
+]
+
+# 用户夸菟菚
+COMPLIMENT_WORDS = [
+    "你好可爱", "你好温柔", "你真棒", "你好漂亮", "你真贴心", "喜欢你这样",
+    "你真好", "你最好了", "你好懂我", "你太会了", "被你暖到", "你治愈",
+    "你好乖", "你好香", "你好会说话",
+]
+
+
+def check_apology(text: str) -> bool:
+    """判断用户是否在道歉/求原谅。"""
+    lowered = text.lower()
+    return any(w in lowered for w in APOLOGY_WORDS)
+
+
+def check_sharing(text: str) -> bool:
+    """判断用户是否在主动分享心事/秘密。"""
+    lowered = text.lower()
+    return any(w in lowered for w in SHARING_WORDS)
+
+
+def check_compliment(text: str) -> bool:
+    """判断用户是否在夸菟菚。"""
+    lowered = text.lower()
+    return any(w in lowered for w in COMPLIMENT_WORDS)
 
 
 def check_nickname_used(text: str, pref: str | None) -> bool:
